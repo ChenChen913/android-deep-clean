@@ -4,9 +4,9 @@
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | v1.2.6 本地工作区（尚未提交） |
+| 验证提交 | `20e3c1f`（v1.2.6） |
 | 本地 Mock | 193 passed / 1 skipped（194 collected） |
-| CI | 未触发（本地改动） |
+| CI | 运行 `42184163372`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
 | 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
 | 真实设备清理/恢复 | 0 台；未执行 execute、purge、restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
