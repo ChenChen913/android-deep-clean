@@ -1,0 +1,244 @@
+# Android 深度清理 Skill — 独立验证测试报告
+
+- 报告版本：v1.0（2026-11-06）
+- 验证人：verifier（独立验证工程师，Team 成员）
+- 被测对象：android-deep-clean Skill（Python CLI，版本 1.0.0，mock 传输）
+- 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
+- 任务：共享任务 task-3
+
+## 1. 结论（摘要）
+
+| 指标 | 结果 |
+|---|---|
+| 收集用例 | 116 |
+| 通过 | 114 |
+| 失败 | 0 |
+| 跳过 | 2（本机 Windows 无法创建符号链接 / 目录联接未被 mock 扫描识别） |
+| 耗时 | 约 39.7 秒（单进程，无网络、无 adb） |
+| 测试命令 | python -m pytest tests -q |
+| 最终判定 | 通过。全量套件可重复、确定性运行；发现的产品缺陷 8 项全部已由 Lead 修复并用本套件回归验证 |
+
+安全核心结论：在本套件覆盖的范围内，execute 无令牌/错令牌/被篡改的 plan/selection 均被拒绝；DANGEROUS 与未复核 CAUTION 无法进入选择清单；路径穿越、保护路径、符号链接、计划后文件变化、mock 权限拒绝均被拒绝或跳过并写入报告；隔离/恢复/purge/verify 行为符合 CLI 契约。
+
+## 2. 环境与可复现性
+
+| 项目 | 值 |
+|---|---|
+| 操作系统 | Windows-11-10.0.26300-SP0（Windows 11） |
+| Python | 3.13.3（C:\Python313） |
+| pytest | 9.0.2 |
+| adb | 未安装（NOT FOUND）——测试不依赖 adb |
+| 网络 | 不需要；全部为本地临时目录 fixture |
+| 传输层 | mock（--transport mock） |
+| 产品版本 | android-deep-clean 1.0.0 |
+| 工作区 | C:\Users\11853\Desktop\安卓清理 |
+| 报告生成时间 | 2026-11-06 12:03 +08:00 |
+
+复现方式（在仓库根目录执行）：
+
+~~~text
+python -m pytest tests -q
+~~~
+
+- 全部 fixture 建在 pytest 的 tmp_path 临时目录内，测试结束自动清理；不写仓库、不触碰真实设备。
+- 每个用例独立创建 mock 设备树 + state 目录，用例之间无顺序依赖。
+- 阈值极小的测试 config 由 tests/adc_testkit.py 的 DEFAULT_CONFIG 提供（duplicate 100B、large 1MB、old/apk/archive/screenshot/download 等 1 天），文件 mtime 统一设为 NOW-5 天（远大于阈值），避免边界抖动。
+- 文件内容由 sha256(设备路径) 派生，保证同大小文件内容不同；重复文件用例显式写入逐字节相同内容。
+
+被测产品代码指纹（SHA-256 前 16 位，2026-11-06 12:03 快照，用于审计报告对应版本）：
+
+| 文件 | 指纹 |
+|---|---|
+| android-deep-clean/scripts/adc.py | F18A1254E07E0447 |
+| scripts/adc_lib/analyzer.py | E020B1139B0BDFB6 |
+| scripts/adc_lib/cli.py | 1882D3E7A431B2BE |
+| scripts/adc_lib/config.py | 602C2B53FACB6978 |
+| scripts/adc_lib/device.py | BE6AFD932B644670 |
+| scripts/adc_lib/executor.py | 478CF6CB6ACAAF9D |
+| scripts/adc_lib/mock_transport.py | 7EA645EDCFBB71B5 |
+| scripts/adc_lib/models.py | D284A6CB59B64545 |
+| scripts/adc_lib/planner.py | A5C611AD960D7754 |
+| scripts/adc_lib/reports.py | B8F190484D680DEB |
+| scripts/adc_lib/rules.py | 8D2FC43225893F2E |
+| scripts/adc_lib/scanner.py | 981E8BF4FFCA9ACE |
+| scripts/adc_lib/state.py | 9B6B5FB17495CA4A |
+| scripts/adc_lib/transport.py | ABB5C088472A92A2 |
+| scripts/adc_lib/util.py | 0F5EF3FD1619F7ED |
+| scripts/adc_lib/__init__.py | 5FFC7D5FB8AD44A3 |
+
+## 3. 真实测试输出
+
+命令：python -m pytest tests -q
+
+~~~text
+......................................ss................................ [ 62%]
+............................................                             [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests/test_execute.py:388: 当前环境无法创建符号链接（Windows 需要开发者模式/管理员）:
+           [WinError 1314] 客户端没有所需的特权
+SKIPPED [1] tests/test_execute.py:434: 目录联接未被扫描/分类为缓存目录（平台差异）
+114 passed, 2 skipped in 39.68s
+~~~
+
+说明：本机控制台对中文输出可能存在 cp936 显示乱码，但 pytest 断言读取的是文件/JSON 的 UTF-8 内容，不影响结果。
+
+分文件用例数（合计 116）：
+
+| 测试文件 | 用例数 | 关注点 |
+|---|---:|---|
+| tests/test_unit_util.py | 24 | stat 行解析、shell_quote、路径规范化、配置加载、通用工具 |
+| tests/test_unit_guard.py | 17 | guard_path 安全策略（系统/数据库/.nomedia/聊天/媒体/空目录等） |
+| tests/test_unit_planner.py | 9 | plan/selection 哈希、令牌格式、review 门控 |
+| tests/test_doctor.py | 3 | 设备/能力识别、权限降级、报告落盘 |
+| tests/test_scan.py | 5 | 统计准确性（os.walk 对照）、只读、隔离区排除、权限不足、截断 |
+| tests/test_analyze_categories.py | 13 | 各清理类别识别与分组准确性 |
+| tests/test_plan_select.py | 14 | 复核门控、风险策略、篡改拒绝、DANGEROUS 不可选 |
+| tests/test_execute.py | 23 | 隔离/永久删除/恢复/purge/verify、权限失败、计划后变化、路径穿越、符号链接 |
+| tests/test_cli_contract.py | 8 | 退出码 2/3/4/5/6、前置依赖、inspect/recheck、用户未确认 |
+
+辅助文件：
+
+- tests/adc_testkit.py：mock 设备树构造器（PhoneTree）、CLI 调用封装（AdcEnv/CliResult）、只读快照与差异断言、quarantine/journal 读取、review 生成。
+- tests/conftest.py：每个用例一个隔离 env fixture。
+- tests/fixtures/README.md：fixture 模式（目录映射、四类 JSON、只读/反向模式）文档。
+
+## 4. 覆盖矩阵（任务需求 → 测试）
+
+| 需求 | 对应测试 | 结果 |
+|---|---|---|
+| doctor 识别设备/能力 | test_doctor.py::test_doctor_reports_device_packages_and_capabilities | 通过 |
+| doctor 权限不足降级 + limitations | test_doctor.py::test_doctor_degrades_when_permissions_and_tools_are_missing | 通过 |
+| doctor 报告文件（json/md） | test_doctor.py::test_doctor_writes_json_and_markdown_reports | 通过 |
+| scan 条目/大小与 os.walk 精确对照 | test_scan.py::test_scan_stats_match_os_walk | 通过 |
+| scan 只读（哈希/mtime/size 清单不变） | test_scan.py::test_scan_and_downstream_read_only_steps_do_not_touch_device | 通过 |
+| scan 排除自身隔离区 | test_scan.py::test_scan_excludes_skill_own_quarantine_area | 通过 |
+| scan 权限不足记录 skipped | test_scan.py::test_scan_records_inaccessible_subtree_and_analyze_degrades | 通过 |
+| scan max_files 截断上报 | test_scan.py::test_scan_max_files_truncation_is_reported | 通过 |
+| 卸载残留 Android/data | test_analyze_categories.py::test_uninstall_residue_for_data_obb_and_media | 通过 |
+| 卸载残留 Android/obb | 同上 | 通过 |
+| 卸载残留 Android/media | 同上 | 通过 |
+| 重复文件（同内容不同名/路径）+ 保留建议 | test_analyze_categories.py::test_duplicates_keep_suggestion_and_same_size_different_content | 通过 |
+| 不同内容同大小不误判 | 同上 | 通过 |
+| 长期大文件 | test_analyze_categories.py::test_large_old_file_is_detected | 通过 |
+| 旧 APK | test_analyze_categories.py::test_old_apk_is_detected | 通过 |
+| 旧压缩包 | test_analyze_categories.py::test_old_archive_is_detected | 通过 |
+| 旧截图 | test_analyze_categories.py::test_old_screenshot_is_detected | 通过 |
+| 缓存目录 | test_analyze_categories.py::test_app_cache_group_reports_exact_size_and_file_count | 通过 |
+| 缩略图缓存 | test_analyze_categories.py::test_thumbnail_cache_is_detected | 通过 |
+| 临时文件/日志 | test_analyze_categories.py::test_temp_logs_are_detected | 通过 |
+| 空目录候选与分组 | test_analyze_categories.py::test_empty_dir_candidate_and_grouping | 通过 |
+| 微信/QQ cache 且不碰 image2/video 等媒体 | test_analyze_categories.py::test_chat_cache_only_includes_cache_dirs_not_media | 通过 |
+| 分组大小与文件数准确/汇总一致 | test_app_cache_group_reports_exact_size_and_file_count + 各分类用例 | 通过 |
+| 新鲜文件不被年龄规则误报 | test_analyze_categories.py::test_fresh_files_are_not_flagged_by_age_rules | 通过 |
+| 分析报告/review 模板落盘 | test_analyze_categories.py::test_analysis_writes_reports_and_review_template | 通过 |
+| 未复核 CAUTION 不可 select | test_plan_select.py::test_unreviewed_caution_is_not_selectable | 通过 |
+| review=keep/uncertain 不可 select | test_plan_select.py::test_keep_or_uncertain_review_stays_unselectable（2 参数） | 通过 |
+| review=trash 后可 select | test_plan_select.py::test_reviewed_trash_caution_becomes_selectable | 通过 |
+| review 输入校验（未知 ID/非法 verdict/缺 reason/降风险/analysis_id 不符/重复） | test_plan_select.py::test_review_validation_rejects_unsafe_or_malformed_input | 通过 |
+| select 必须显式范围 + 未知 ID | test_plan_select.py::test_select_requires_scope_and_known_ids | 通过 |
+| delete 模式只能选 SAFE | test_plan_select.py::test_delete_mode_selection_rejects_caution | 通过 |
+| DANGEROUS 不可 select / 不进 selection | test_plan_select.py::test_selection_never_contains_dangerous_items、test_protected_files_never_become_candidates_or_selections、test_dangerous_item_in_tampered_plan_cannot_enter_selection | 通过 |
+| 数据库/.nomedia/密钥/系统路径保护 | test_unit_guard.py 多条 + test_execute.py::test_protected_and_system_paths_in_manifest_are_refused | 通过 |
+| plan/selection 报告落盘 | test_plan_select.py::test_plan_and_selection_reports_written | 通过 |
+| 篡改 plan 被拒绝且文件不动 | test_plan_select.py::test_tampered_plan_is_rejected_without_touching_files | 通过 |
+| 篡改 selection（ids/mode）被拒绝 | test_plan_select.py::test_tampered_selection_ids_or_mode_are_rejected | 通过 |
+| 篡改 selection 元数据/summary 被拒绝 | test_plan_select.py::test_tampered_selection_metadata_must_be_rejected + test_unit_planner.py::test_selection_hash_covers_item_metadata_and_summary | 通过 |
+| 用户拒绝/未确认不执行 | test_cli_contract.py::test_user_declining_never_executes | 通过 |
+| 缺少选择清单 / 无 token / 错 token | test_execute.py::test_execute_requires_selection_and_valid_token | 通过 |
+| 隔离执行 + journal + report + verify | test_execute.py::test_quarantine_execute_moves_files_and_verify | 通过 |
+| 永久删除模式（需 flag 且 SAFE） | test_execute.py::test_permanent_delete_mode、test_permanent_delete_requires_flag_and_matching_mode | 通过 |
+| denied_ops 隔离失败：报失败且源文件仍在 | test_execute.py::test_denied_move_reports_failure_and_keeps_source | 通过 |
+| denied_ops 删除失败：报失败且源文件仍在 | test_execute.py::test_denied_delete_reports_failure_and_keeps_source | 通过 |
+| 计划后文件改 mtime/大小/被删：跳过并报失败 | test_execute.py::test_changed_or_deleted_files_are_skipped_after_plan | 通过 |
+| 计划后目标目录变化：报失败不误删 | test_execute.py::test_missing_target_directory_is_reported_as_failure | 通过 |
+| 路径穿越（恶意 manifest）：拒绝 + 报告 | test_execute.py::test_path_traversal_in_manifest_is_refused_with_report | 通过 |
+| 符号链接文件拒绝 | test_execute.py::test_executor_refuses_symlink_entry（stub）+ test_execute_refuses_real_symlink_from_tampered_manifest（本机跳过） | 通过/跳过 |
+| 父目录符号链接拒绝 | test_execute.py::test_executor_refuses_realpath_redirect（stub）+ test_execute_refuses_parent_directory_link（本机跳过） | 通过/跳过 |
+| 文件不在目标目录内/大小/inode 变化拒绝 | test_execute.py::test_executor_refuses_changed_size_mtime_inode、test_executor_refuses_file_outside_target_directory | 通过 |
+| 空目录 rmdir 成功 | test_execute.py::test_empty_dir_rmdir_removes_only_empty_directory | 通过 |
+| 非空目录 rmdir 失败且不递归 | test_execute.py::test_empty_dir_rmdir_refuses_non_empty_directory_without_recursion | 通过 |
+| verify 正确判断（源文件重建/quarantine 丢失） | test_execute.py::test_verify_detects_source_recreated_after_quarantine、test_verify_detects_missing_quarantine_file | 通过 |
+| restore 恢复隔离文件（--all / --ids，幂等） | test_execute.py::test_restore_recovers_quarantined_files、test_restore_by_candidate_id | 通过 |
+| purge 错令牌拒绝 / 正确令牌永久删除 / 二次 purge | test_execute.py::test_purge_requires_token_and_deletes_permanently | 通过 |
+| stat 行解析 | test_unit_util.py::test_parse_stat_line_*（4 组） | 通过 |
+| shell_quote | test_unit_util.py::test_shell_quote_posix_single_quote_escaping | 通过 |
+| 路径规范化 | test_unit_util.py::test_normalize_device_path_rules、test_display_path_maps_mount_aliases、test_is_under_boundaries | 通过 |
+| guard_path 关键规则 | tests/test_unit_guard.py（17 条） | 通过 |
+| plan/selection hash + token | test_unit_planner.py（9 条）、test_plan_select.py 相关 | 通过 |
+| 退出码契约 0/2/3/4/5/6 | test_cli_contract.py（8 条）+ test_execute 中的 3/6 | 通过 |
+| inspect / recheck | test_cli_contract.py::test_inspect_candidate_lists_manifest、test_recheck_creates_new_snapshot_and_comparison | 通过 |
+
+## 5. 正向用例（摘要）
+
+1. doctor：mock 设备 serial/model/sdk、packages 计数、capabilities（privilege/tier/sdcard_read/android_data_read/hashing/quarantine_usable）、df 容量、recommended_roots 与 report-doctor.md 全部与 fixture 一致；doctor 全程只读。
+2. scan：条目数 = 根目录 + 目录数 + 文件数，大小之和与 os.walk 独立计算结果逐字节一致；SQLite entries 表路径集合与 os.walk 完全一致；scan/analyze/plan/select 全链路前后 fixture 文件哈希、大小、mtime 清单不变；不产生 execution 记录。
+3. analyze：13 类场景各自命中且分组大小/文件数准确（总大小 = 各文件 size 之和；file_count = 文件数；summary 汇总与 items 一致）；重复文件建议保留 DCIM/Camera 中一份，只列出其余副本为删除目标；同大小不同内容不误判；聊天缓存只含 cache/ 子目录，image2/video2 等媒体目录不会进入候选。
+4. plan/select：review=trash 后 CAUTION 可选；selection 含 plan_hash/mode/token/selection_hash，token 形如 ADC-XXXXXXXX，用户确认字段 confirmed=false；报告落盘。
+5. execute：quarantine 模式移入隔离区且内容逐字节一致，journal 记录 quarantined，verify 全通过；delete 模式永久删除并统计 released_bytes；空目录仅用 rmdir 删除；restore --all/--ids 恢复原路径与内容；purge 后隔离文件与源文件永久消失且 verify/restore 行为正确。
+6. recheck/inspect：inspect 输出的文件清单与 analysis.db 候选清单一致；recheck 生成新快照/新分析/对比报告。
+
+## 6. 反向 / 安全用例（摘要）
+
+1. 令牌与确认：无 selection、无 token、错误 token、用户未确认（仅 select 未 execute）均不产生 execution、fixture 完全不变。
+2. 篡改：改 plan.json（total_bytes）→ 拒绝（plan hash）；改 selection（增删 item id / 改 mode）→ 拒绝；改 selection 元数据或 summary（total_bytes/bytes/risk/primary_path）→ selection_hash 不匹配拒绝。
+3. 风险策略：DANGEROUS 永不进入候选/selection/execute；未复核 CAUTION 不可 select；review=keep/uncertain 不可 select；delete 模式拒绝 CAUTION；review 非法输入（未知 ID、非法 verdict、trash 无实质 reason、降风险、analysis_id 不符、重复 decision）全部 exit 5。
+4. 路径类：manifest 注入 /sdcard/../../etc/passwd → 拒绝并报“非法路径”，不越界删除；注入 .nomedia / /system/bin/decoy → 受保护路径拒绝、源文件仍在；stub transport 验证 symlink 类型、realpath 重定向、inode/size/mtime 变化、目标目录外文件全部拒绝。
+5. 执行期变化：计划后改 mtime、改大小、删除文件 → 逐文件跳过并在 failures 记录原因，其余文件正常处理，exit 6；目标目录被删除 → 组级失败、exit 6、不误删无关文件。
+6. mock 权限失败：denied_ops move/delete → 该文件失败且源文件仍在，其余文件正常，exit 6，report 可见。
+7. 扫描权限不足：inaccessible=/sdcard/Android/data → doctor 降级 tier=limited、scan 记录 skipped、analyze 不崩溃且 limitations 含说明。
+8. restore/purge：purge 错令牌 exit 3 且隔离文件仍在；正确令牌永久删除后 restore 无文件可恢复、二次 purge 幂等；二次 restore 幂等（0 恢复、0 失败）。
+9. 空目录：rmdir 遇到执行前被写入文件 → 失败、目录与文件均保留、不递归删除。
+
+## 7. 发现的产品缺陷与修复状态
+
+验证期间共发现 8 项产品问题（均先以测试固化复现，再修复，最后全量回归通过）。修复均由 Lead 完成，verifier 只读复核并重跑。
+
+| # | 严重度 | 问题 | 发现测试 | 修复状态 |
+|---|---|---|---|---|
+| 1 | 中 | 聊天缓存候选 app_pkg/app_kind 为空（package_from_path 不识别 /sdcard/tencent、/sdcard/MicroMsg 等聊天根），导致 select --app-kinds chat 永远选不中微信/QQ 缓存 | test_analyze_categories.py::test_chat_cache_only_includes_cache_dirs_not_media | 已修复（新增聊天根→包名映射），回归通过 |
+| 2 | 中 | 被修改的 selection 元数据（items.total_bytes / summary.bytes）未被拒绝：旧 selection_hash 只覆盖 plan_hash/ids/mode | test_plan_select.py::test_tampered_selection_metadata_must_be_rejected、test_unit_planner.py | 已修复（selection_hash 覆盖 items 关键字段 + summary，planner/executor 共用 compute_selection_hash），回归通过 |
+| 3 | 中低 | 篡改 plan.json 把条目 risk 改为 DANGEROUS 并 selectable=true 后，select 仍将其放入 selection（execute 层会拦，但违反“select 绝不能把 DANGEROUS 放进 selection”） | test_plan_select.py::test_dangerous_item_in_tampered_plan_cannot_enter_selection | 已修复（select 前校验 plan_hash、强制拒绝 DANGEROUS/未知风险），回归通过 |
+| 4 | 高 | clean_dir_children 目标目录缺失/被改时，组级失败不计入 failed_files，execute 返回 rc=0 且 status=completed（静默成功） | test_execute.py::test_missing_target_directory_is_reported_as_failure | 已修复（早期失败分支 failed_count=1，summary 增加 failed_groups，CLI 返回 6），回归通过 |
+| 5 | 中高 | manifest 注入带 .. 的恶意路径时，执行报告渲染抛异常：CLI rc=3、无 stdout、report-after.md 未生成（execution.json 已写成 partial） | test_execute.py::test_path_traversal_in_manifest_is_refused_with_report | 已修复（reports 全部改用 safe_display_path，永不抛异常），回归通过 |
+| 6 | 低 | restore --all 二次执行报失败（原路径已存在），非幂等 | test_execute.py::test_restore_recovers_quarantined_files | 已修复（跳过 restore_status=restored 的条目），回归通过 |
+| 7 | 低 | /boot.img、/dtbo.img、/recovery.img 等“/boot 前缀 + 非目录”系统镜像文件未被 hard block 命中 | test_unit_guard.py::test_system_paths_are_hard_blocked | 已修复（HARD_BLOCK_PREFIXES 增加系统镜像文件），回归通过 |
+| 8 | 中 | 空目录候选生成错误：gen_empty_dirs 查询未取 kind，CandidateFile 默认 kind=file，导致 guard 以“空目录只接受目录”拒绝全部空目录（空目录清理功能完全失效）；sample_paths 也曾显示父目录 | test_analyze_categories.py::test_empty_dir_candidate_and_grouping、test_execute.py::test_empty_dir_rmdir_* | 已修复（查询带 kind/size/inode/dev；sample_paths 修正），回归通过 |
+
+回归结论：以上 8 项修复后，全量 116 用例 0 失败（2 条符号链接集成用例因本机 Windows 权限跳过，见下节）。
+
+说明：验证过程中另有若干“测试自身假设错误”（例如旧 selection_hash 覆盖范围、plan hash 对已经为 False 的 selectable 再次置 False、测试未创建其断言依赖的文件），均已修正测试而非弱化产品断言，不计入产品缺陷。
+
+## 8. 未覆盖 / 需真机或特殊环境验证
+
+| 项目 | 原因 / 现状 | 建议 |
+|---|---|---|
+| 真实符号链接文件（os.symlink） | 本机 Windows 无 SeCreateSymbolicLinkPrivilege（WinError 1314），集成用例自动 skip；执行器对 symlink 类型的拒绝逻辑已用 stub transport 单元测试覆盖并通过 | 在开发者模式 Windows 或 Linux CI 上补跑 test_execute_refuses_real_symlink_from_tampered_manifest |
+| 父目录符号链接（目录联接） | mklink /J 可创建，但 mock 传输层 _to_device 会把联接解析成目标路径，扫描后不会形成 cache 候选（平台/实现差异），用例 skip；realpath 重定向拒绝逻辑已用 stub 单测覆盖 | 真机上用符号链接目录验证 execute 的 realpath 异常拒绝路径 |
+| 真机 adb / rish / local 传输 | 本套件只测 mock；USB/无线调试授权、Shizuku rish、Termux 本机 shell 行为需真机 | 真机冒烟：doctor/scan 只读步骤 |
+| Root / su / adb-root 提权 | mock 只能模拟 privilege 字段；真实 su 授权弹窗、adb root 可用性需真机 | userdebug 设备验证 internal-cache 扫描与 /data/data 隔离 |
+| Android 11+ scoped storage 真实行为 | 不同 ROM/版本对 /sdcard/Android/data 的 ADB 可见性不同；mock 只能模拟 readable/inaccessible | 在多品牌 ROM 上验证 doctor 探测与 limitations 文案 |
+| 真实可用空间变化 df_delta | mock df 为固定值，free_delta 恒 0；真实 purge 后空间变化、系统写入干扰未验证 | 真机 purge 前后统计可用空间 |
+| 中断（Ctrl+C, 退出码 130） | 未自动化（Windows 下信号语义不同） | 真机/交互式验证中断时 journal 一致 |
+| 真实断连/超时（TransportError 退出码 4） | 仅覆盖 mock root 不存在（exit 4）；adb 断连、命令超时需真机 | 真机拔线/超时演练 |
+| 大规模目录性能与 deadline 截断 | 有 max_files 截断单测；75 万文件、1 小时 deadline 的真实性能未跑 | 真机大目录压测 |
+| inspect --pull 预览拉取 | 只覆盖 inspect --id/--json；--pull 会写本地预览文件，未覆盖 | 真机只读预览验证 |
+| .trashed-* 新版检测规则 | 代码已支持，但本轮套件未新增专门用例（Lead 在验证后期加入） | 建议补一条 .trashed-时间戳 候选用例 |
+| 媒体/压缩包内容真伪 | 分类依赖扩展名/文件名规则，不做内容解码；真实损坏文件/伪装扩展名未验证 | 真机抽样 |
+| 内容被改但 size+mtime+inode 全相同 | 契约只要求 size/mtime/inode 复核；该场景无法检测（设计限制，非缺陷） | 如需更强保证，可对高风险项增加执行前哈希复核 |
+| Windows 命令行退出码显示 | 部分 shell 可能把非 0 显示为 1；测试统一断言 subprocess.returncode（6 等） | 文档中提示 |
+
+## 9. 测试隔离性与只读保证
+
+- 每个用例使用独立 tmp_path：phone/（mock 设备树）、fixtures/（config/packages/caps/device/review JSON）、state/（CLI 状态目录）。
+- 只读断言：doctor/scan/analyze/plan/select 前后对整棵 mock 设备树做相对路径到 (kind,size,mtime_ns,sha256) 清单比对，任何新增/删除/改动都会失败。
+- 反向用例除断言退出码/报告外，额外断言“源文件仍存在”“未产生 execution.json”“无关文件未被删除”。
+- 未修改 android-deep-clean/ 任何文件；测试仅写 tests/** 与本报告。
+
+## 10. 结论
+
+1. android-deep-clean Skill 在 mock 传输下的 CLI 契约实现完整：12 个命令、状态目录结构、退出码 0/2/3/4/5/6 均有测试覆盖并通过。
+2. 安全闸门有效：令牌、哈希、风险等级、保护路径、路径穿越、符号链接、执行前 stat 复核、权限失败上报、隔离优先策略均按契约工作；部分失败一律非 0 退出并写入报告。
+3. 验证期间发现的 8 项产品缺陷（含 1 项高、2 项中高/中）均已修复并通过回归；最终 114 passed / 0 failed / 2 skipped（均为环境限制的符号链接集成用例）。
+4. 剩余风险集中在真机相关能力（adb/rish/root/scoped storage/真实符号链接/性能）；建议按第 8 节清单做一轮真机冒烟后再发布。
+
+> 本报告中的全部数字来自实际命令输出；未为了让测试通过而放宽断言。2 条 skip 原因为运行环境限制，已在第 8 节列出替代覆盖与补跑建议。

@@ -1,0 +1,206 @@
+# 安装与使用说明
+
+## 1. 组成与要求
+
+- Python 3.9+（只用标准库；Windows 上 Python 3.13 已测试）。
+- 一台 Android 手机 + ADB（USB 或无线调试）；或 Shizuku/rish；或 Termux 本机。
+- 不需要 Root；Root 是可选高阶通道。
+- 不需要 pip 安装任何依赖。
+
+Skill 目录结构：
+
+~~~text
+android-deep-clean/
+  SKILL.md
+  scripts/adc.py
+  scripts/adc_lib/*.py
+  references/*.md
+  LICENSE
+~~~
+
+## 2. 安装
+
+### 2.1 DeepSeek Harness
+
+用户级技能目录为 %USERPROFILE%\.agents\skills\<skill-name>\。
+
+~~~powershell
+$src = ".\android-deep-clean"
+$dst = "$env:USERPROFILE\.agents\skills\android-deep-clean"
+if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+Copy-Item -Recurse -Force $src $dst
+python "$dst\scripts\adc.py" --help
+~~~
+
+新开一个 DSH 会话，技能列表中应出现 android-deep-clean。若未出现：检查 SKILL.md 是否在技能目录根部、frontmatter 是否只有 name/description。
+
+### 2.2 Claude Code / 其他 Agent Skills
+
+把整个 android-deep-clean 目录复制到平台的 skills 根目录（例如 ~/.claude/skills/android-deep-clean）。平台只加载 SKILL.md 的 name/description，正文和 scripts 按需使用。
+
+### 2.3 从项目目录直接运行（不安装）
+
+~~~powershell
+python android-deep-clean\scripts\adc.py --help
+~~~
+
+Agent 也可以直接调用项目内脚本；安装只是为了平台自动发现。
+
+## 3. 手机准备
+
+### 3.1 ADB（推荐）
+
+~~~powershell
+adb version
+adb devices
+adb shell getprop ro.build.version.release
+~~~
+
+- 手机：开发者选项 → USB 调试；连接后确认 RSA 授权。
+- 无线调试（Android 11+）：无线调试 → 使用配对码 → adb pair IP:PORT → adb connect IP:DEBUG_PORT。
+- 多设备：命令加 --serial <序列号>。
+
+### 3.2 Shizuku
+
+- 安装 Shizuku，按应用内指引启动（无线调试或 root）。
+- 安装 rish；命令加 --transport rish --rish-path rish。
+- 能力等同 ADB shell，不能读 /data/data。
+
+### 3.3 Root
+
+- 用户已有 Magisk/KernelSU 等，可加 --root-mode su。
+- 仍需走完整确认流程；Root 不是跳过安全机制的理由。
+
+## 4. 基本流程
+
+所有命令的通用参数写在子命令之后。建议变量：
+
+~~~powershell
+$Skill = "$env:USERPROFILE\.agents\skills\android-deep-clean"
+$State = ".adc-state"
+~~~
+
+### 4.1 体检
+
+~~~powershell
+python "$Skill\scripts\adc.py" doctor --state $State --transport adb
+~~~
+
+看权限级别和存储；若 Android/data 不可读，报告会明确说明。
+
+### 4.2 扫描（只读）
+
+~~~powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb
+~~~
+
+默认 /sdcard；Root 自动追加 /data/data/*/cache。参数：
+- --roots /sdcard,/sdcard/Download
+- --max-depth 32
+- --max-files 500000
+- --no-internal
+
+### 4.3 分析
+
+~~~powershell
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb
+~~~
+
+产出清理前报告、analysis-summary.json、review-template.json。
+
+### 4.4 AI 复核
+
+Agent 读取 analysis-summary.json，运行 inspect 抽查，写 review.json（格式见 SKILL.md / references/review-guide.md）。CAUTION 未复核不可选。
+
+### 4.5 计划
+
+~~~powershell
+python "$Skill\scripts\adc.py" plan --state $State --transport adb --review "$State\analysis\review.json"
+~~~
+
+### 4.6 用户选择与确认
+
+~~~powershell
+# 全部可选 SAFE
+python "$Skill\scripts\adc.py" select --state $State --transport adb --all-safe
+
+# 按分类
+python "$Skill\scripts\adc.py" select --state $State --transport adb --categories app_cache,browser_cache,thumbnails
+
+# 按应用类型
+python "$Skill\scripts\adc.py" select --state $State --transport adb --app-kinds browser,chat
+
+# 精确 ID（最安全）
+python "$Skill\scripts\adc.py" select --state $State --transport adb --ids app_cache-xxxx,residue-yyyy
+~~~
+
+输出确认令牌。把清单给用户看，得到明确确认后再执行。用户拒绝就停止。
+
+### 4.7 执行（默认隔离）
+
+~~~powershell
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <确认令牌>
+~~~
+
+永久删除（仅 SAFE，用户明确要求；selection 必须也使用 delete 模式）：
+
+~~~powershell
+python "$Skill\scripts\adc.py" select --state $State --transport adb --all-safe --mode delete
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <令牌> --mode delete --allow-permanent-delete
+~~~
+
+### 4.8 验证与释放
+
+~~~powershell
+python "$Skill\scripts\adc.py" verify --state $State --transport adb
+
+# 确认无误后永久释放隔离区（不可恢复）
+python "$Skill\scripts\adc.py" quarantine purge --state $State --transport adb --token <PURGE_TOKEN>
+
+# 或恢复
+python "$Skill\scripts\adc.py" restore --state $State --transport adb --all
+~~~
+
+### 4.9 复查
+
+~~~powershell
+python "$Skill\scripts\adc.py" recheck --state $State --transport adb
+~~~
+
+新增候选需要重新复核/计划/选择/确认，不能复用旧令牌。
+
+## 5. 专项清理示例
+
+| 用户目标 | 推荐选择 |
+|---|---|
+| 微信/QQ 缓存 | select --categories chat_cache（先复核） |
+| 卸载残留 | select --categories residue（逐包确认） |
+| 旧 APK | select --categories apk |
+| 重复照片/视频 | select --categories duplicates（逐组确认） |
+| 长期未用大文件 | select --categories large_old,media_old |
+| 浏览器缓存 | select --app-kinds browser |
+| 空目录 | select --categories empty_dirs（rmdir 非空失败） |
+| 只清 SAFE | select --all-safe |
+
+## 6. 输出与状态
+
+状态目录 .adc-state 保存 doctor、SQLite 快照、分析、计划、选择、journal、验证报告。默认不包含个人文件内容；inspect --pull 才会把预览文件拉到本机。可随时删除状态目录重新开始（但会失去恢复 journal）。
+
+## 7. 无手机测试
+
+~~~powershell
+python -m pytest tests -q
+~~~
+
+mock 模式需要 fixture JSON，格式见 docs/cli-contract.md。测试覆盖正常扫描、残留、重复、大旧文件、权限降级、保护路径、用户拒绝、令牌校验、文件变化、符号链接、删除失败、隔离恢复、验证与复查。
+
+## 8. 退出码
+
+0 成功；2 用法；3 安全拒绝；4 设备/传输；5 校验失败；6 部分失败；1 未预期；130 中断。
+
+## 9. 注意事项
+
+- Agent 不得自行确认用户意图；必须把 selection 清单和令牌风险展示给用户。
+- 隔离不等于释放空间；报告里会区分。
+- 不同 ROM/Android 版本能力不同，以 doctor 实际探测为准。
+- 真机首次使用建议先跑全盘体检，只读查看报告，再决定是否清理。

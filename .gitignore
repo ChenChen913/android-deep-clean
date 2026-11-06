@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.adc-state/
+.tmp-smoke/
+.adc/
+*.skill
+dist/
+.venv/
+.vscode/
+.DS_Store
+Thumbs.db
