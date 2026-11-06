@@ -62,9 +62,10 @@ python android-deep-clean\scripts\adc.py analyze --state .adc-state --transport 
 | 平台识别（三系统） | 单元测试通过 |
 | HarmonyOS NEXT 路径守卫 | 单元测试通过 |
 | HarmonyOS NEXT 公共目录扫描/分析/隔离/恢复 | mock 全链路通过 |
-| Android 回归 | 188 passed / 1 skipped |
+| Android 回归 | 192 passed / 1 skipped |
+| HarmonyOS 3.0 兼容版真机只读 | 1 台通过（HONOR HLK-AL00，doctor/scan/analyze/inspect） |
 | HarmonyOS NEXT 真机 | **未验证** |
-| HarmonyOS 兼容版真机 | **未验证** |
+| HarmonyOS 兼容版清理/恢复 | **未验证**（只读链路已通过 1 台） |
 | `bm clean` 实际行为 | **未验证，未接入执行器** |
 
-真机未验证前，不应对外宣称「已支持鸿蒙清理」。当前准确表述是：**已实现 HarmonyOS 识别、hdc 通路和公共目录清理的架构与 mock 验证，等待真机冒烟。** 具体验收步骤见 [真机验收清单](real-device-test-plan.md)。
+HarmonyOS 3.0 兼容版的只读链路已在 HONOR HLK-AL00 上通过；NEXT 真机、清理与恢复仍未验证。当前准确表述是：**已实现 HarmonyOS 识别、hdc 通路和公共目录清理的架构与 mock 验证，兼容版只读已通过一台真机，NEXT 真机仍待冒烟。** 具体验收步骤见 [真机验收清单](real-device-test-plan.md)。

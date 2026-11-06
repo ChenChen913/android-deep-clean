@@ -367,6 +367,15 @@ class Analyzer:
         ]
         if ages:
             evidence.append({"code": "age", "text": f"最旧文件约 {age_label(max(ages))} 未修改"})
+        anomalous = [
+            item for item in files
+            if item.mtime and (item.mtime < 946684800 or item.mtime > self.now + 86400)
+        ]
+        if anomalous:
+            evidence.append({
+                "code": "mtime_anomaly",
+                "text": f"{len(anomalous)} 个文件时间戳异常（早于 2000 年或晚于当前时间），年龄不可作为判断依据",
+            })
         return evidence
 
     # ------------------------------------------------------------- generators

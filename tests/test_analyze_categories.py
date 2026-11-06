@@ -21,6 +21,15 @@ def _file_paths(env, item):
     }
 
 
+def test_anomalous_mtime_is_flagged(env):
+    env.phone.file("/sdcard/Download/ancient.bin", size=500, mtime=315532800)  # 1980-01-01
+
+    _analyze(env)
+    item = env.require_item("download_old")
+    assert any(entry["code"] == "mtime_anomaly" for entry in item["evidence"])
+    assert item["risk"] == "CAUTION"
+
+
 def test_generic_app_cache_defaults_to_caution(env):
     env.set_config(safety={"generic_cache_risk": "caution"})
     env.phone.file("/sdcard/Android/data/com.installed.app/cache/a.bin", size=300)

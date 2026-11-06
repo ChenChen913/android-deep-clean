@@ -1,20 +1,34 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.4，2026-11-06）
+## 当前版本摘要（v1.2.5，2026-11-06）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `6d86354`（v1.2.4） |
-| 本地 Mock | 191 passed / 1 skipped（192 collected） |
-| CI | 运行 `42178935692`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
-| 真实 Android 设备 | 1 台部分验证：HONOR HLK-AL00 / Android 10，doctor 通过；scan 发现 find 空格缺陷，已修复待重跑 |
-| 真实 HarmonyOS 兼容版 | 0 台完成验收 |
+| 本地 Mock | 192 passed / 1 skipped（193 collected） |
+| CI | 待本次提交运行 |
+| 真实设备只读 | 1 台通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 底座），doctor、scan、analyze、inspect 全部成功 |
+| 真实设备清理/恢复 | 0 台；未执行 execute、purge、restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
-| 当前定位 | 开发与只读试用候选版本；**未达到正式清理工具门槛** |
+| 当前定位 | 只读链路已在真实设备验证；**清理与恢复仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.2.5 真机只读验证（2026-11-06）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），DSH Go proot Ubuntu，local 通路，普通应用权限。
+
+| 步骤 | 结果 |
+|---|---|
+| doctor | platform=harmonyos_compat；privilege=shell；tier=standard；transport=local；型号/版本读取正确 |
+| scan | 652 条目 / 593 文件 / 723.34 MiB；skipped 为空；未截断 |
+| analyze | 6 个 `download_old` 候选组，全部 CAUTION；`candidate_bytes=309,378,488` |
+| 受保护项 | `.db` 与 `.key` 进入 protected_items，未进入候选 |
+| inspect | 成功，未加 `--pull`，未拉取文件内容 |
+| 删除/恢复 | 未执行；`/sdcard/.android-deep-clean` 不存在 |
+
+已知限制：`pm` 不在容器 PATH，卸载残留检测跳过；容器内 Android/data 可读不代表 scoped storage 权限；`classes.dex` 的 1980 年时间戳已新增 `mtime_anomaly` 证据提示。
 
 ### v1.2.4 真实手机扫描修复（2026-11-06）
 
