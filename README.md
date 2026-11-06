@@ -8,7 +8,7 @@ HarmonyOS 会先识别系统类型再决定能力：兼容版沿用 Android 规�
 
 核心不是“删得快”，而是：**发现长期积累、隐藏较深、普通清理工具忽略的无用文件，同时绝不误删用户重要数据。**
 
-> 当前状态：Mock 与 CI 通过；真实设备只读链路已在 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）的 local 与 USB+ADB 两条通路验证；**真实设备清理/恢复验收数与 HarmonyOS NEXT 真机验收数仍为 0**。未达到正式清理工具门槛，详见 [真机验收清单与发布门槛](docs/real-device-test-plan.md)。
+> 当前状态：Mock 与 CI 通过；真实设备只读链路已在 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）的 local 与 USB+ADB 两条通路验证；隔离/恢复机制已用自建测试文件演练通过；**尚未对用户真实数据执行清理，HarmonyOS NEXT 真机验收数为 0**。未达到正式清理工具门槛，详见 [真机验收清单与发布门槛](docs/real-device-test-plan.md)。
 
 ## 两条通路
 

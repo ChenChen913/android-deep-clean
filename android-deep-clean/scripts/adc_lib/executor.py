@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .device import device_identity
+from .device import transport_device_identity
 from .reports import execution_markdown, verification_markdown
 from .platform import match_harmony_photo_root
 from .rules import guard_path
@@ -118,7 +118,7 @@ class Executor:
         expected_id = str((expected_device or {}).get("id") or "")
         if not expected_id:
             raise SafetyError("计划缺少设备身份，拒绝执行。请重新运行 doctor/scan/analyze/plan。")
-        current_device = device_identity(self.transport.device_info())
+        current_device = transport_device_identity(self.transport)
         if current_device.get("id") != expected_id:
             raise SafetyError(
                 "当前连接的设备与计划设备不一致，拒绝执行。"
@@ -165,7 +165,7 @@ class Executor:
     # ------------------------------------------------------------- execution
     def run(self, plan: dict[str, Any], selection: dict[str, Any], token: str, mode: str, allow_permanent: bool) -> dict[str, Any]:
         conn, manifests = self._preflight(plan, selection, token, mode, allow_permanent)
-        current_identity = device_identity(self.transport.device_info())
+        current_identity = transport_device_identity(self.transport)
         expected_identity_id = str((plan.get("device_identity") or {}).get("id") or "")
         if expected_identity_id and current_identity.get("id") != expected_identity_id:
             conn.close()

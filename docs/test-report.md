@@ -1,20 +1,43 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.6，2026-11-06）
+## 当前版本摘要（v1.2.7，2026-11-06）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `20e3c1f`（v1.2.6） |
-| 本地 Mock | 193 passed / 1 skipped（194 collected） |
-| CI | 运行 `42184163372`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
+| 验证提交 | v1.2.7 本地工作区（尚未提交） |
+| 本地 Mock | 194 passed / 1 skipped（195 collected） |
+| CI | 待运行 |
 | 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
-| 真实设备清理/恢复 | 0 台；未执行 execute、purge、restore |
+| 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功，哈希与 mtime 一致；**仅测试文件，未处理用户真实数据** |
+| 真实设备清理/恢复 | 0 台完成正式验收；未对用户真实文件执行 execute、purge、restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
-| 当前定位 | 只读链路已在真实设备双通路验证；**清理与恢复仍未验收，未达到正式清理工具门槛** |
+| 当前定位 | 只读链路与隔离/恢复机制已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.2.7 真机隔离/恢复演练与设备身份修复（2026-11-06）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），Windows 11 + Platform Tools，`--transport adb`，shell 权限。测试对象仅为本轮自建的 3 个文件（26 B × 3），不涉及用户任何真实文件。
+
+| 步骤 | 结果 |
+|---|---|
+| 造数 | `/sdcard/ADC-SelfTest/` 下 3 个文件（a.tmp / b.tmp / c.log），mtime 设为 2020-01-01，记录 SHA-256 |
+| doctor + scan | 4 条目 / 3 文件 / 78 B，未截断 |
+| analyze | 1 个 `temp_logs` 候选组，SAFE，3 个文件 |
+| plan + select | 1 组 / 78 B；令牌 `ADC-A312E333`；quarantine 模式 |
+| execute | 首次被设备身份校验拒绝（见缺陷 #11）；修复后 3/3 成功，电脑备份 3 个文件，隔离区 `/sdcard/.android-deep-clean/quarantine/...` |
+| verify | 3 项检查全部通过，源文件残留 0，隔离文件缺失 0 |
+| 隔离区哈希 | 3 个文件 SHA-256 与造数时完全一致 |
+| restore | 3/3 恢复，失败 0；恢复后 SHA-256 与 mtime 均与原始一致，隔离区残留文件 0 |
+| 收尾 | 测试目录、隔离区目录、电脑端备份全部删除，手机恢复原状 |
+
+本轮发现并修复的缺陷：
+
+| # | 严重度 | 问题 | 根因 | 修复 |
+|---|---|---|---|---|
+| 11 | 高 | HarmonyOS 兼容版真机 `execute` 必然报「当前连接的设备与计划设备不一致」，计划与当前序列号相同 | doctor 先做平台识别（harmonyos_compat）再计算身份，执行前的二次校验直接用 `device_info()`，platform 为空被当成 Android，同一手机得到两个 id | 新增 `transport_device_identity()`，统一先 `detect_platform()` 再计算身份；执行前置校验与执行中校验都改用它；新增回归测试 |
 
 ### v1.2.6 ADB 真机只读验证与全盘扫描修复（2026-11-06）
 

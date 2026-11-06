@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.7 — 修复 HarmonyOS 兼容版执行前的设备身份误判
+
+### Fixed
+- 修复 HarmonyOS 兼容版真机上 `execute` 必然报「当前连接的设备与计划设备不一致」的问题：`doctor` 会先做平台识别再计算设备身份，而执行前的二次校验直接用 `device_info()`（platform 为空）计算，同一台手机被算成两个 id。新增 `transport_device_identity()`，执行前置校验与执行中校验统一使用平台识别后的身份；新增回归测试。
+- 真机隔离/恢复演练通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），自建 3 个测试文件（78 B），quarantine 执行 3/3 成功、电脑备份 3 个、verify 3/3 通过、restore 3/3 成功，恢复后 SHA-256 与 mtime 完全一致，隔离区残留 0；测试文件与隔离目录已删除。
+
 ## v1.2.6 — 修复 ADB 全盘扫描只返回根条目
 
 ### Fixed

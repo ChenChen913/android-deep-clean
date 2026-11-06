@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from adc_lib.config import load_config
-from adc_lib.device import device_identity
+from adc_lib.device import device_identity, transport_device_identity
 from adc_lib.executor import _recompute_plan_hash, _recompute_selection_hash
 from adc_lib.models import DeviceInfo
 from adc_lib.planner import build_plan, build_selection
@@ -126,6 +126,21 @@ def test_device_identity_within_same_device_but_different_serial():
     a = device_identity(_device(serial="AAA"))
     b = device_identity(_device(serial="BBB"))
     assert a["hash_material_sha256"] != b["hash_material_sha256"]
+
+
+def test_transport_identity_applies_platform_detection():
+    """execute must hash the same identity doctor does on HarmonyOS devices."""
+    def build(platform=""):
+        return DeviceInfo(
+            serial="HONOR123", sdk=29, release="10", manufacturer="HUAWEI",
+            model="HLK-AL00", fingerprint="honor/fp", platform=platform,
+            harmony_version="3.0.0", os_version="3.0.0",
+        )
+
+    transport = SimpleNamespace(device_info=lambda: build(""))
+    detected = transport_device_identity(transport)
+    assert detected["platform"] == "harmonyos_compat"
+    assert detected["id"] == device_identity(build("harmonyos_compat"))["id"]
 
 
 # ---------------------------------------------------------------- plan hash

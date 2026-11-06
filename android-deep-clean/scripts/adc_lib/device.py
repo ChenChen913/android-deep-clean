@@ -66,6 +66,17 @@ def device_identity(info: DeviceInfo) -> dict[str, Any]:
     }
 
 
+def transport_device_identity(transport: Transport) -> dict[str, Any]:
+    """Identity of the connected device with platform detection applied.
+
+    doctor() sets platform before hashing; later stages must normalize the same
+    way, otherwise the same phone gets two different ids (HarmonyOS compat).
+    """
+    info = transport.device_info()
+    info.platform = detect_platform(info)
+    return device_identity(info)
+
+
 class Doctor:
     def __init__(self, transport: Transport, config: dict[str, Any], *, root_mode: str = "auto", try_adb_root: bool = False) -> None:
         self.transport = transport
