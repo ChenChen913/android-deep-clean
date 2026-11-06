@@ -13,6 +13,7 @@ from .platform import (
     HARMONY_PUBLIC_ROOT,
     HARMONY_TMP_ROOT,
     detect_platform,
+    harmony_photo_root,
     platform_identity_extra,
     profile_for,
 )
@@ -105,6 +106,24 @@ class Doctor:
                 result[command] = False
         return result
 
+    def _harmony_photo_roots(self) -> list[str]:
+        """Discover media-library roots per numeric user uid.
+
+        The historical example path uses uid 100, but multi-user devices and
+        newer builds can differ. Probe /mnt/data first, then always keep 100 as
+        a documented fallback.
+        """
+        roots: list[str] = []
+        try:
+            for entry in self.transport.listdir("/mnt/data"):
+                if entry.kind == "dir" and str(entry.name).isdigit():
+                    roots.append(harmony_photo_root(entry.name))
+        except TransportError:
+            pass
+        if HARMONY_PHOTO_ROOT not in roots:
+            roots.insert(0, HARMONY_PHOTO_ROOT)
+        return list(dict.fromkeys(roots))
+
     def run(self) -> dict[str, Any]:
         self._ensure_connected()
         privilege = "shell"
@@ -125,7 +144,14 @@ class Doctor:
         identity = device_identity(device)
         commands = self._probe_commands(profile.command_probes)
         packages = self.transport.list_packages()
-        probes = {path: self.transport.access(path).to_dict() for path in profile.probe_paths}
+        probe_paths = list(profile.probe_paths)
+        harmony_photo_roots: list[str] = []
+        if platform == HARMONY_NEXT:
+            harmony_photo_roots = self._harmony_photo_roots()
+            for root in harmony_photo_roots:
+                if root not in probe_paths:
+                    probe_paths.append(root)
+        probes = {path: self.transport.access(path).to_dict() for path in probe_paths}
         storage = []
         for path in list(profile.default_roots) + ["/data"]:
             try:
@@ -142,7 +168,8 @@ class Doctor:
         if platform == HARMONY_NEXT:
             public = can_read(HARMONY_PUBLIC_ROOT)
             docs = can_read(HARMONY_PUBLIC_ROOT + "/Docs")
-            photo = can_read(HARMONY_PHOTO_ROOT)
+            readable_photos = [root for root in harmony_photo_roots if can_read(root)]
+            photo = bool(readable_photos)
             tmp = can_read(HARMONY_TMP_ROOT)
             can_write_public = bool((probes.get(HARMONY_PUBLIC_ROOT) or {}).get("writable"))
             hash_ok = bool(commands.get("sha256sum") or commands.get("md5sum"))
@@ -153,7 +180,7 @@ class Doctor:
             if not docs:
                 limitations.append("无法读取公共目录下的 Docs/Download：下载目录清理不可用。")
             if not photo:
-                limitations.append("无法读取媒体库 /mnt/data/100/media_fuse/Photo（需要 API 22+ 或系统允许）。")
+                limitations.append("无法读取媒体库 /mnt/data/<uid>/media_fuse/Photo（需要 API 22+、正确的用户 uid 或系统允许）。")
             if not tmp:
                 limitations.append("无法读取 /data/local/tmp：临时区清理不可用。")
             if not hash_ok:
@@ -166,7 +193,7 @@ class Doctor:
             limitations.append("应用缓存可尝试官方 bm clean -c -n <bundle>（需开发者模式），本版本不自动执行，需真机验证。")
             if self.transport.name == "mock":
                 limitations.append("当前为 mock 模拟设备，结果仅用于测试，不代表任何真实手机。")
-            recommended_roots = [root for root in profile.default_roots if can_read(root)]
+            recommended_roots = ([HARMONY_PUBLIC_ROOT] if public else []) + readable_photos
             capabilities = {
                 "privilege": "shell",
                 "tier": tier,
@@ -184,6 +211,7 @@ class Doctor:
                 "public_write": can_write_public,
                 "docs_read": docs,
                 "photo_read": photo,
+                "harmony_photo_roots": readable_photos,
                 "tmp_read": tmp,
                 "commands": commands,
             }

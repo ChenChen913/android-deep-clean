@@ -21,6 +21,7 @@ from typing import Any
 
 from .device import device_identity
 from .reports import execution_markdown, verification_markdown
+from .platform import match_harmony_photo_root
 from .rules import guard_path
 from .scanner import load_packages
 from .state import State
@@ -235,6 +236,8 @@ class Executor:
         free_after = self._safe_df()
         purge_token = random_token("PURGE")
         finished_at = now_iso()
+        discovered_bytes = int((plan.get("summary") or {}).get("bytes") or 0)
+        selected_bytes = int((selection.get("summary") or {}).get("bytes") or 0)
         execution = {
             "schema": 1,
             "execution_id": self.execution_id,
@@ -270,10 +273,14 @@ class Executor:
                 "aborted_groups": sum(1 for item in item_results if item.get("status") == "aborted"),
                 "success_files": total_success,
                 "failed_files": total_fail,
+                "discovered_bytes": discovered_bytes,
+                "selected_bytes": selected_bytes,
                 "processed_bytes": total_bytes,
+                "unprocessed_bytes": max(0, selected_bytes - total_bytes),
                 "released_bytes": total_bytes if mode == "delete" else 0,
                 "quarantine_files": quarantine_files,
                 "quarantine_bytes": quarantine_bytes,
+                "quarantine_occupied_bytes": quarantine_bytes,
                 "backup_files": len(self.backup_manifest),
                 "backup_bytes": self.backup_bytes,
                 "removed_dirs": processed_dirs,
@@ -328,8 +335,9 @@ class Executor:
             rel = display[len("/sdcard"):].lstrip("/") or "root"
             return normalize_device_path(quarantine_root + "/files/sdcard/" + rel)
         if self.platform == "harmonyos_next":
-            for root, tag in (("/storage/media/100/local/files", "public"), ("/mnt/data/100/media_fuse/Photo", "photo")):
-                if is_under(display, root):
+            photo_root = match_harmony_photo_root(display)
+            for root, tag in (("/storage/media/100/local/files", "public"), (photo_root, "photo")):
+                if root and is_under(display, root):
                     rel = display[len(root):].lstrip("/") or "root"
                     return normalize_device_path(quarantine_root + "/files/" + tag + "/" + rel)
         if is_under(path, "/data"):

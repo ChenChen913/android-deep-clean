@@ -37,12 +37,13 @@ android-deep-clean/
 用户级技能目录为 %USERPROFILE%\.agents\skills\<skill-name>\。
 
 ~~~powershell
-$src = ".\android-deep-clean"
-$dst = "$env:USERPROFILE\.agents\skills\android-deep-clean"
-if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
-Copy-Item -Recurse -Force $src $dst
-python "$dst\scripts\adc.py" --help
+# 先备份旧目录，再复制并校验；失败会自动恢复旧版本
+powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_skill.ps1
+
+python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --help
 ~~~
+
+安装脚本会把旧目录保留为 `<原目录>.bak-时间戳`，不会直接删除用户自己添加的配置或文件；确认新版本可用后再手动清理备份。
 
 新开一个 DSH 会话，技能列表中应出现 android-deep-clean。若未出现：检查 SKILL.md 是否在技能目录根部、frontmatter 是否只有 name/description。
 

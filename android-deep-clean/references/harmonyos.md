@@ -44,7 +44,7 @@ const.product.manufacturer
 |---|---|
 | hdc 设备发现、shell、file recv | 已实现；待真机验证 |
 | 公共目录 `/storage/media/100/local/files` 扫描 | 已实现；待真机验证 |
-| 媒体库 `/mnt/data/<uid>/media_fuse/Photo`（API 22+） | 已实现路径；待真机验证 |
+| 媒体库 `/mnt/data/<uid>/media_fuse/Photo`（API 22+） | 已实现路径，doctor 动态探测数字 uid，100 仅回退；待真机验证 |
 | 公共目录文件隔离、恢复、永久删除 | 已实现；待真机验证 |
 | 重复文件、旧 APK/压缩包、临时日志、空目录分析 | 已实现；仅限公共目录 |
 | 其他应用私有缓存逐文件扫描 | **不支持**：沙箱不可读 |
@@ -118,7 +118,7 @@ python android-deep-clean\scripts\adc.py quarantine purge --state .adc-state --t
 
 - hdc 在目标 ROM 上的授权、断连、超时行为。
 - 公共目录的真实可写性与 `find/stat/xargs/sha256sum/df/rm/mv/rmdir` 差异。
-- 媒体库路径的 uid（默认 100）与 API 版本差异。
+- 媒体库数字 uid 的探测结果与 API 版本差异（代码已动态探测，100 仅回退）。
 - `bm clean -c -n` 在零售机开发者模式下的实际结果。
 - 中文/特殊字符路径、超大目录扫描性能。
 

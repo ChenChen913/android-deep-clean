@@ -8,6 +8,8 @@ HarmonyOS 会先识别系统类型再决定能力：兼容版沿用 Android 规�
 
 核心不是“删得快”，而是：**发现长期积累、隐藏较深、普通清理工具忽略的无用文件，同时绝不误删用户重要数据。**
 
+> 当前状态：Mock 与 CI 通过，真实 Android / HarmonyOS 设备完成验收数为 0。未达到正式清理工具门槛，详见 [真机验收清单与发布门槛](docs/real-device-test-plan.md)。
+
 ## 两条通路
 
 | 通路 | 场景 | 连接方式 | 关键参数 |
@@ -31,12 +33,10 @@ HarmonyOS 会先识别系统类型再决定能力：兼容版沿用 Android 规�
 3. 安装 Skill 并确认设备：
 
 ~~~powershell
-$src = ".\android-deep-clean"
-$dst = "$env:USERPROFILE\.agents\skills\android-deep-clean"
-if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
-Copy-Item -Recurse -Force $src $dst
+# 安装/更新：先备份旧目录，复制后校验，失败自动回滚
+powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_skill.ps1
 
-$Skill = $dst
+$Skill = "$env:USERPROFILE\.agents\skills\android-deep-clean"
 $State = ".adc-state"
 python "$Skill\scripts\adc.py" devices --adb-path adb
 python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial <序列号>
@@ -133,7 +133,7 @@ NEXT 只处理 `/storage/media/100/local/files` 与媒体库；应用私有缓�
 python -m pytest tests -q
 ~~~
 
-测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前本地全量结果：186 passed / 1 skipped / 0 failed（187 collected）。skip 为 Windows 目录联接环境限制，符号链接用例在可创建链接的环境中会实际执行；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
+测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前本地全量结果：188 passed / 1 skipped / 0 failed（189 collected）。skip 为 Windows 目录联接环境限制，符号链接用例在可创建链接的环境中会实际执行；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 [真机验收清单](docs/real-device-test-plan.md)。
 
 ## 文档
 
@@ -141,6 +141,7 @@ python -m pytest tests -q
 - [权限与兼容性](docs/permissions-and-compatibility.md)
 - [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)
 - [测试报告](docs/test-report.md)
+- [真机验收清单与发布门槛](docs/real-device-test-plan.md)
 - [限制与路线图](docs/limitations-and-roadmap.md)
 - [Android 存储研究](docs/research-android-storage.md)
 - [CLI 契约](docs/cli-contract.md)

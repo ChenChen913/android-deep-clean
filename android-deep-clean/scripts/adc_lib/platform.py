@@ -13,6 +13,7 @@ when Android build properties are present; otherwise they stay conservative.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,17 @@ HARMONY_PUBLIC_ROOT = "/storage/media/100/local/files"
 HARMONY_PHOTO_ROOT = "/mnt/data/100/media_fuse/Photo"
 HARMONY_TMP_ROOT = "/data/local/tmp"
 HARMONY_QUARANTINE_ROOT = HARMONY_PUBLIC_ROOT + "/Docs/.android-deep-clean/quarantine"
+_HARMONY_PHOTO_RE = re.compile(r"^(/mnt/data/(\d+)/media_fuse/Photo)(?:/|$)")
+
+
+def harmony_photo_root(uid: str | int = "100") -> str:
+    return f"/mnt/data/{int(uid)}/media_fuse/Photo"
+
+
+def match_harmony_photo_root(path: str) -> str:
+    """Return the media-library root for any numeric user uid, or ''."""
+    match = _HARMONY_PHOTO_RE.match(str(path or ""))
+    return match.group(1) if match else ""
 
 
 @dataclass(frozen=True)

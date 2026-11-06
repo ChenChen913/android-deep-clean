@@ -61,6 +61,19 @@ def test_harmony_guard_only_allows_public_storage():
     ):
         result = guard_path(blocked, "archives", kind="file", platform=HARMONY_NEXT)
         assert result["allowed"] is False, blocked
+    other_user = guard_path("/mnt/data/200/media_fuse/Photo/a.jpg", "archives", kind="file", platform=HARMONY_NEXT)
+    assert other_user["allowed"] is True
+
+
+def test_harmony_media_uid_is_discovered(env):
+    _harmony_env(env)
+    env.phone.file(PUBLIC + "/Docs/Download/old.zip", size=500, age_days=900)
+    env.phone.file("/mnt/data/200/media_fuse/Photo/old.jpg", size=500, age_days=900)
+
+    doctor = env.ok("doctor").json()
+    assert "/mnt/data/200/media_fuse/Photo" in doctor["capabilities"]["harmony_photo_roots"]
+    scan = env.ok("scan").json()
+    assert "/mnt/data/200/media_fuse/Photo" in scan["roots_scanned"]
 
 
 def test_harmony_next_mock_full_flow(env):

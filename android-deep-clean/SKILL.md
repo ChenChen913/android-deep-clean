@@ -63,8 +63,8 @@ description: 面向 Android 与华为 HarmonyOS 手机的 AI 深度垃圾清理 
 安装到当前 Agent Skills 目录（DeepSeek Harness / 兼容 Agent Skills 的平台）：
 
 ~~~powershell
-# 1) 把整个 android-deep-clean 目录复制到用户级 skills 目录
-Copy-Item -Recurse -Force .\android-deep-clean "$env:USERPROFILE\.agents\skills\android-deep-clean"
+# 1) 安装/更新：先备份旧目录，复制后校验，失败自动回滚
+powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_skill.ps1
 
 # 2) 确认 SKILL.md 位于技能目录根部
 Test-Path "$env:USERPROFILE\.agents\skills\android-deep-clean\SKILL.md"
@@ -330,6 +330,9 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 ## 已知限制（必须对用户诚实）
 
 - 非 Root 下无法读取 /data/data；部分 ROM 的 Android/data 也不可读。
+- 通用应用缓存与浏览器缓存默认为 CAUTION，需要逐项复核；只有缩略图与明确临时日志默认 SAFE。不要把“缓存目录”当成可直接批量永久删除。
+- 隔离不会释放空间；执行报告中的「空间账目」会分别列出已隔离、未处理、已实际释放与隔离区占用，purge 后才真正释放。
+- 真实 Android / HarmonyOS 设备尚未完成端到端验收；发布门槛见项目 docs/real-device-test-plan.md，未满足前不得宣称正式可用。
 - HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；`bm clean` 未接入执行器。
 - HarmonyOS NEXT/兼容版的 hdc/adb 真机行为尚未验证；mock 通过不等于真机通过。
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；不能把“未访问”当唯一证据。

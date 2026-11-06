@@ -60,6 +60,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "leftover_age_hours": 1,
         "max_files_per_selection": 200000,
         "require_ai_review_for_caution": True,
+        "generic_cache_risk": "caution",
     },
     "exclude_paths": [
         "/sdcard/.android-deep-clean",

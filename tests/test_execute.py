@@ -69,8 +69,13 @@ def test_quarantine_execute_moves_files_and_verify(env):
     assert summary["failed_files"] == 0
     assert summary["quarantine_files"] == 2
     assert summary["quarantine_bytes"] == 800
+    assert summary["discovered_bytes"] >= summary["selected_bytes"]
+    assert summary["selected_bytes"] == 800
     assert summary["processed_bytes"] == 800
-    assert summary["released_bytes"] == 0  # quarantine does not free space yet
+    assert summary["unprocessed_bytes"] == 0
+    assert summary["released_bytes"] == 0
+    assert summary["quarantine_occupied_bytes"] == 800
+    assert "空间账目" in env.state_path("execution/report-after.md").read_text(encoding="utf-8")
 
     for name in sizes:
         assert not env.phone.exists(CACHE + "/" + name), name

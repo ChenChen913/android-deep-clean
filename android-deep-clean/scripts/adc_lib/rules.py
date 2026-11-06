@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from .models import PackageIndex
-from .platform import HARMONY_NEXT, HARMONY_PHOTO_ROOT, HARMONY_PUBLIC_ROOT, normalize_platform
+from .platform import HARMONY_NEXT, HARMONY_PUBLIC_ROOT, match_harmony_photo_root, normalize_platform
 from .util import RISK_ORDER, ext_of, is_under, normalize_device_path, risk_max
 
 # ---------------------------------------------------------------- categories
@@ -421,8 +421,9 @@ def _guard_harmony_next(
     """
     if not category_risk_allowed(category):
         return {"allowed": False, "hard_block": True, "reason": f"未知清理类别：{category}", "risk_floor": "DANGEROUS"}
-    roots = (HARMONY_PUBLIC_ROOT, HARMONY_PHOTO_ROOT)
-    matched = next((root for root in roots if path == root or is_under(path, root)), "")
+    matched = HARMONY_PUBLIC_ROOT if (path == HARMONY_PUBLIC_ROOT or is_under(path, HARMONY_PUBLIC_ROOT)) else ""
+    if not matched:
+        matched = match_harmony_photo_root(path)
     if not matched:
         return {
             "allowed": False,

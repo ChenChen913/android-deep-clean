@@ -232,6 +232,12 @@ class Analyzer:
         if self._limit() or not files or category not in CATEGORY_META or category == "protected":
             return None
         effective_risk = risk or category_risk(category)
+        # Generic app/browser caches may contain offline downloads or unsaved
+        # user material. They are CAUTION by default and need explicit review.
+        if category in {"app_cache", "browser_cache"}:
+            policy = str((self.config.get("safety") or {}).get("generic_cache_risk", "caution")).lower()
+            if policy != "safe":
+                effective_risk = _max_risk(effective_risk, "CAUTION")
         accepted: list[CandidateFile] = []
         for item in files:
             guard = guard_path(item.path, category, kind=item.kind, packages=self.packages, config=self.config, platform=self.platform)
@@ -456,6 +462,10 @@ class Analyzer:
             ]
             if package:
                 evidence.append({"code": "app", "text": f"应用：{label} ({package})，kind={kind}"})
+                evidence.append({
+                    "code": "installed",
+                    "text": "应用状态：已安装" if self.packages.is_installed(package) else "应用状态：未知或未安装",
+                })
             self._add_candidate(
                 category=category, action="clean_dir_children", primary_path=path, files=files,
                 risk=risk, title=f"{label or '应用'}缓存：{display_path(path)}", evidence=evidence,

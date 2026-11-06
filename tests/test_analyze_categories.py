@@ -21,6 +21,18 @@ def _file_paths(env, item):
     }
 
 
+def test_generic_app_cache_defaults_to_caution(env):
+    env.set_config(safety={"generic_cache_risk": "caution"})
+    env.phone.file("/sdcard/Android/data/com.installed.app/cache/a.bin", size=300)
+
+    _analyze(env)
+    item = env.require_item("app_cache")
+    assert item["risk"] == "CAUTION"
+    assert item["ai_review_required"] is True
+    assert item["selectable"] is True
+    assert any(entry["code"] == "installed" for entry in item["evidence"])
+
+
 def test_app_cache_evidence_matches_filtered_manifest(env):
     cache = "/sdcard/Android/data/com.installed.app/cache"
     env.phone.file(cache + "/a.bin", size=300)

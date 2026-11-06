@@ -17,7 +17,13 @@ from typing import Any, Iterable
 
 from .device import Doctor, doctor_markdown
 from .models import Entry, PackageIndex
-from .platform import HARMONY_NEXT, HARMONY_QUARANTINE_ROOT, profile_for
+from .platform import (
+    HARMONY_NEXT,
+    HARMONY_PHOTO_ROOT,
+    HARMONY_PUBLIC_ROOT,
+    HARMONY_QUARANTINE_ROOT,
+    profile_for,
+)
 from .rules import package_from_path
 from .state import State
 from .transport import Transport, TransportError
@@ -113,7 +119,10 @@ class Scanner:
                 else:
                     roots.append(normalize_device_path(item))
         else:
-            roots = list(profile.default_roots)
+            if platform == HARMONY_NEXT:
+                roots = [HARMONY_PUBLIC_ROOT] + list(caps.get("harmony_photo_roots") or [HARMONY_PHOTO_ROOT])
+            else:
+                roots = list(profile.default_roots)
             if platform != HARMONY_NEXT and caps.get("sdcard_read") is False:
                 roots = []
             if platform != HARMONY_NEXT and include_internal and root_ok:
