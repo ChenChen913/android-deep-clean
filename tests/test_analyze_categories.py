@@ -21,6 +21,21 @@ def _file_paths(env, item):
     }
 
 
+def test_app_cache_evidence_matches_filtered_manifest(env):
+    cache = "/sdcard/Android/data/com.installed.app/cache"
+    env.phone.file(cache + "/a.bin", size=300)
+    env.phone.file(cache + "/msg.db", size=100)
+    env.phone.file(cache + "/.nomedia", content="")
+
+    _analyze(env)
+    item = env.require_item("app_cache")
+    assert item["file_count"] == 1
+    assert item["total_bytes"] == 300
+    evidence = {entry["code"]: entry["text"] for entry in item["evidence"]}
+    assert "文件 1 个" in evidence["count"]
+    assert item["human_size"] in evidence["size"]
+
+
 def test_app_cache_group_reports_exact_size_and_file_count(env):
     env.phone.file("/sdcard/Android/data/com.installed.app/cache/a.bin", size=300)
     env.phone.file("/sdcard/Android/data/com.installed.app/cache/b.bin", size=500)

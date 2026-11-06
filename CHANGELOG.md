@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.2 — 证据数字与真实清单对齐
+
+### Fixed
+- 修复候选证据中的文件数和逻辑大小按安全过滤前的清单统计，导致报告显示 4 个文件/900KB、实际只清理 2 个文件/800KB 的问题。
+- 证据数字现在统一按最终写入 candidate_files 的清单生成，AI 复核不会再被虚高数字误导。
+
+### Added
+- 回归测试：缓存目录内的 `.db`、`.nomedia` 等受保护文件不计入证据和候选清单。
+- 本地 mock 全链路演练：doctor → scan → analyze → 复核 → plan → select → execute（含电脑备份）→ verify → restore → purge。
+
 ## v1.1.1 — 安全修正与发布工程化
 
 ### Fixed

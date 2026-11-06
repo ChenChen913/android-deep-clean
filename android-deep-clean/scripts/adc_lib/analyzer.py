@@ -259,6 +259,18 @@ class Analyzer:
             self.db.execute("DELETE FROM claimed WHERE candidate_id=?", (candidate_id,))
             return None
         total_bytes = sum(max(0, item.size) for item in delete_files)
+        dir_count = sum(1 for item in final_files if item.kind == "dir")
+        # Evidence is authored by the generator from the pre-filter file list.
+        # Rewrite count/size so the report never claims more files or bytes than
+        # the candidate actually stores (protected files are dropped above).
+        checked_evidence: list[dict[str, str]] = []
+        for entry in evidence or []:
+            entry = dict(entry)
+            if entry.get("code") == "count":
+                entry["text"] = f"文件 {len(delete_files)} 个，目录 {dir_count} 个"
+            elif entry.get("code") == "size":
+                entry["text"] = f"逻辑大小 {human_bytes(total_bytes)}"
+            checked_evidence.append(entry)
         sample_paths = [item.path for item in delete_files[: self.sample_limit]] or [
             item.path for item in final_files if item.kind == "dir"
         ][: self.sample_limit] or [primary_path]
@@ -274,9 +286,9 @@ class Analyzer:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 candidate_id, category, display_title, effective_risk, action, primary_path,
-                total_bytes, len(delete_files), sum(1 for item in final_files if item.kind == "dir"),
+                total_bytes, len(delete_files), dir_count,
                 float(confidence), app_pkg, app_kind,
-                json.dumps(evidence or [], ensure_ascii=False),
+                json.dumps(checked_evidence, ensure_ascii=False),
                 json.dumps(reasons or [], ensure_ascii=False),
                 keep_suggestion, 1 if review_required else 0,
                 0 if effective_risk == "DANGEROUS" else 1,
@@ -304,7 +316,7 @@ class Analyzer:
                     "human_size": human_bytes(total_bytes),
                     "file_count": len(delete_files),
                     "sample_paths": sample_paths,
-                    "evidence": evidence or [],
+                    "evidence": checked_evidence,
                 }
             )
         return candidate_id
