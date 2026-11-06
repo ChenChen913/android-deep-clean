@@ -6,6 +6,19 @@
 - 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
 - 任务：共享任务 task-3（v1.0 基线）、task-4（v1.1 双通路扩展）
 
+## v1.2.2 CI 二次修复（2026-11-06）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| ubuntu-latest 上 Python 3.9 不存在 | runner 已迁移到 Ubuntu 26.04，toolcache 无 3.9 | CI 矩阵改用 ubuntu-22.04 |
+| Linux 上符号链接用例失败 | mock `_to_device()` 用 `resolve()` 跟随链接，链接项被登记为目标路径并覆盖真实文件 | 改为 `normpath()` 保留链接自身路径 |
+
+验证：
+
+- WSL Linux 复现：修复前 `entries=6 / files=0 / items=[]`，修复后 `entries=7 / files=1 / items=[app_cache]`。
+- Windows 本地全量：186 passed / 1 skipped（符号链接用例本次实际执行并通过）。
+- CI 结果以 GitHub Actions 最新运行结果为准。
+
 ## v1.2.1 CI 修复复测（2026-11-06）
 
 > 本次只修 CI 环境差异，不改变清理规则。

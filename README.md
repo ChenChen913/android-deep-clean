@@ -133,7 +133,7 @@ NEXT 只处理 `/storage/media/100/local/files` 与媒体库；应用私有缓�
 python -m pytest tests -q
 ~~~
 
-测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前全量结果：185 passed / 2 skipped / 0 failed（187 collected）。2 条 skip 为 Windows 真实符号链接权限限制；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
+测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前本地全量结果：186 passed / 1 skipped / 0 failed（187 collected）。skip 为 Windows 目录联接环境限制，符号链接用例在可创建链接的环境中会实际执行；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
 
 ## 文档
 

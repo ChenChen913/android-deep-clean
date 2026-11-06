@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.2 — 修复 Linux CI 符号链接扫描与 Python 3.9 runner
+
+### Fixed
+- mock 传输的 `_to_device()` 不再用 `Path.resolve()` 跟随符号链接，避免链接项被登记成目标文件并覆盖真实条目；Linux 上扫描包含符号链接的目录时不再丢失候选。
+- GitHub Actions 的 Ubuntu 作业改用 `ubuntu-22.04`，避免 `ubuntu-latest` 升级到 Ubuntu 26.04 后没有 Python 3.9 可用。
+
+### Changed
+- 版本号升级到 1.2.2。
+
 ## v1.2.1 — 修复 Windows CI 大整数写库失败
 
 ### Fixed

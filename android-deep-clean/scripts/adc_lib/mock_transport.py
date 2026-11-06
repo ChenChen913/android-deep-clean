@@ -111,7 +111,9 @@ class MockTransport(Transport):
 
     def _to_device(self, host: Path) -> str:
         try:
-            rel = host.resolve(strict=False).relative_to(self.root)
+            # Do NOT resolve symlinks here: the scan must preserve the symlink
+            # entry itself, otherwise a link is reported under its target path.
+            rel = Path(os.path.normpath(str(host))).relative_to(self.root)
         except ValueError as exc:
             raise TransportError(f"路径不在 mock root 内：{host}") from exc
         parts = rel.parts
