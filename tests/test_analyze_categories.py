@@ -21,13 +21,25 @@ def _file_paths(env, item):
     }
 
 
-def test_anomalous_mtime_is_flagged(env):
-    env.phone.file("/sdcard/Download/ancient.bin", size=500, mtime=315532800)  # 1980-01-01
+def test_anomalous_mtime_cannot_create_age_based_candidate(env):
+    # 1980 placeholders (common in ZIP/APK) must not make a file look decades old.
+    env.phone.file("/sdcard/Download/ancient.bin", size=500, mtime=315532800)
+    env.phone.file("/sdcard/Download/ancient.zip", size=500, mtime=315532800)
+
+    analysis = _analyze(env)
+    assert analysis["items"] == []
+    assert env.analysis_items("download_old") == []
+    assert env.analysis_items("archives") == []
+
+
+def test_anomalous_mtime_is_excluded_from_mixed_group(env):
+    env.phone.file("/sdcard/Download/oldschool.zip", size=500)
+    env.phone.file("/sdcard/Download/placeholder.zip", size=500, mtime=315532800)
 
     _analyze(env)
-    item = env.require_item("download_old")
-    assert any(entry["code"] == "mtime_anomaly" for entry in item["evidence"])
-    assert item["risk"] == "CAUTION"
+    item = env.require_item("archives")
+    assert _file_paths(env, item) == {"/sdcard/Download/oldschool.zip"}
+    assert not any(entry["code"] == "mtime_anomaly" for entry in item["evidence"])
 
 
 def test_generic_app_cache_defaults_to_caution(env):

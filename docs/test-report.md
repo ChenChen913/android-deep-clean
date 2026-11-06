@@ -1,12 +1,12 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.7，2026-11-06）
+## 当前版本摘要（v1.2.8，2026-11-06）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `029e7cc`（v1.2.7） |
-| 本地 Mock | 194 passed / 1 skipped（195 collected） |
-| CI | 运行 `42185051138`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
+| 验证提交 | v1.2.8 本地工作区（尚未提交） |
+| 本地 Mock | 195 passed / 1 skipped（196 collected） |
+| CI | 待运行 |
 | 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
 | 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功，哈希与 mtime 一致；**仅测试文件，未处理用户真实数据** |
 | 真实设备清理/恢复 | 0 台完成正式验收；未对用户真实文件执行 execute、purge、restore |
@@ -16,6 +16,19 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.2.8 异常时间戳不再参与候选（2026-11-06）
+
+外部复核指出：v1.2.5 只给异常 mtime 增加了提示，但年龄统计与按年龄筛选的生成器仍在使用异常值。经代码核对属实。
+
+| 项目 | 修复前 | 修复后 |
+|---|---|---|
+| 年龄计算 `_age_days()` | 1980 时间戳照常换算成 45.9 年 | 早于 2000-01-01 或晚于当前 24 小时返回空，不参与年龄统计 |
+| APK / 压缩包 / 截图 / Download / 大文件 / 旧媒体 / `.trashed-*` / 空目录 | SQL 仅用 `mtime < 截止时间`，1980 文件被当成很旧 | 增加 `mtime >= 2000-01-01` 与 `mtime <= now+24h` 上下界 |
+| 证据 | 先给出异常年龄，再追加一条异常提示 | 不再产生由异常时间计算的年龄 |
+| 混合目录 | 异常文件与正常旧文件一起进入候选 | 只保留正常旧文件；异常文件被排除 |
+
+回归用例：`test_anomalous_mtime_cannot_create_age_based_candidate`（1980 的 `.bin` 与 `.zip` 不产生任何候选）、`test_anomalous_mtime_is_excluded_from_mixed_group`（同目录正常旧 zip 仍进入候选，1980 zip 被排除）；全量 195 passed / 1 skipped。
 
 ### v1.2.7 真机隔离/恢复演练与设备身份修复（2026-11-06）
 

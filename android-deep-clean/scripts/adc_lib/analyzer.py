@@ -106,6 +106,11 @@ CREATE TABLE IF NOT EXISTS meta (
 
 _RISK_ORDER = {"SAFE": 0, "CAUTION": 1, "DANGEROUS": 2}
 
+# Archive members often carry 1980-era placeholder dates and clock skew can
+# produce future times. Such mtimes must never drive age-based selection.
+MTIME_ANOMALY_MIN = 946684800  # 2000-01-01T00:00:00Z
+MTIME_ANOMALY_FUTURE_SECONDS = 86400
+
 
 class Analyzer:
     def __init__(
@@ -346,7 +351,14 @@ class Analyzer:
         )
 
     # ---------------------------------------------------------------- helpers
+    def _mtime_anomalous(self, mtime: int | None) -> bool:
+        if not mtime:
+            return False
+        return int(mtime) < MTIME_ANOMALY_MIN or int(mtime) > self.now + MTIME_ANOMALY_FUTURE_SECONDS
+
     def _age_days(self, mtime: int | None) -> float | None:
+        if self._mtime_anomalous(mtime):
+            return None
         return parse_age_days(mtime, now=self.now)
 
     def _app_meta(self, path: str) -> tuple[str, str, str]:
@@ -367,10 +379,7 @@ class Analyzer:
         ]
         if ages:
             evidence.append({"code": "age", "text": f"最旧文件约 {age_label(max(ages))} 未修改"})
-        anomalous = [
-            item for item in files
-            if item.mtime and (item.mtime < 946684800 or item.mtime > self.now + 86400)
-        ]
+        anomalous = [item for item in files if self._mtime_anomalous(item.mtime)]
         if anomalous:
             evidence.append({
                 "code": "mtime_anomaly",
@@ -588,7 +597,7 @@ class Analyzer:
             file_items = [item for item in files if item.kind == "file"]
             if not file_items:
                 continue
-            ages = [self._age_days(item.mtime) for item in file_items if item.mtime]
+            ages = [age for age in (self._age_days(item.mtime) for item in file_items if item.mtime) if age is not None]
             if ages and max(ages) < threshold:
                 continue
             total = sum(item.size for item in file_items)
@@ -607,9 +616,9 @@ class Analyzer:
         cutoff = self.now - threshold * 86400
         rows = self._rows(
             "SELECT path,parent,name,size,mtime,inode,dev FROM scan.entries e WHERE kind='file' "
-            "AND lower(name) LIKE '.trashed-%' AND mtime IS NOT NULL AND mtime < ? "
+            "AND lower(name) LIKE '.trashed-%' AND mtime IS NOT NULL AND mtime >= ? AND mtime <= ? AND mtime < ? "
             "AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY mtime ASC LIMIT 500",
-            (cutoff,),
+            (MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, cutoff),
         )
         for parent, items in sorted(self._group_by_parent(rows).items()):
             if self._limit():
@@ -772,15 +781,16 @@ class Analyzer:
         placeholders = ",".join("?" for _ in APK_EXTS)
         rows = self._rows(
             f"SELECT path,parent,name,size,mtime,inode,dev FROM scan.entries e WHERE kind='file' AND lower(ext) IN ({placeholders}) "
-            f"AND mtime IS NOT NULL AND mtime < ? AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) "
+            f"AND mtime IS NOT NULL AND mtime >= ? AND mtime <= ? AND mtime < ? AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) "
             f"ORDER BY mtime ASC LIMIT 1000",
-            tuple(sorted(APK_EXTS)) + (self.now - threshold * 86400,),
+            tuple(sorted(APK_EXTS))
+            + (MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400),
         )
         for parent, items in sorted(self._group_by_parent(rows).items()):
             if self._limit():
                 return
             files = [self._file_from_row(row) for row in items]
-            ages = [self._age_days(row["mtime"]) for row in items if row["mtime"]]
+            ages = [age for age in (self._age_days(row["mtime"]) for row in items if row["mtime"]) if age is not None]
             self._group_files_candidate(
                 category="apk", parent=parent, files=files, risk="CAUTION",
                 title=f"旧安装包：{display_path(parent)}",
@@ -799,9 +809,12 @@ class Analyzer:
         apk_placeholders = ",".join("?" for _ in APK_EXTS)
         rows = self._rows(
             f"SELECT path,parent,name,size,mtime,inode,dev FROM scan.entries e WHERE kind='file' AND lower(ext) IN ({archive_placeholders}) "
-            f"AND size >= ? AND mtime IS NOT NULL AND mtime < ? AND lower(ext) NOT IN ({apk_placeholders}) "
+            f"AND size >= ? AND mtime IS NOT NULL AND mtime >= ? AND mtime <= ? AND mtime < ? "
+            f"AND lower(ext) NOT IN ({apk_placeholders}) "
             f"AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY mtime ASC LIMIT 1000",
-            tuple(sorted(ARCHIVE_EXTS)) + (min_size, self.now - threshold * 86400) + tuple(sorted(APK_EXTS)),
+            tuple(sorted(ARCHIVE_EXTS))
+            + (min_size, MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400)
+            + tuple(sorted(APK_EXTS)),
         )
         for parent, items in sorted(self._group_by_parent(rows).items()):
             if self._limit():
@@ -822,11 +835,11 @@ class Analyzer:
         threshold = int(self.config["thresholds"]["screenshot_old_days"])
         rows = self._rows(
             "SELECT path,parent,name,size,mtime,ext,inode,dev FROM scan.entries e WHERE kind='file' "
-            "AND mtime IS NOT NULL AND mtime < ? AND ("
+            "AND mtime IS NOT NULL AND mtime >= ? AND mtime <= ? AND mtime < ? AND ("
             "lower(name) LIKE '%screenshot%' OR lower(name) LIKE '%screen_shot%' OR lower(name) LIKE '%screen-shot%' "
             "OR name LIKE '%截屏%' OR name LIKE '%屏幕截图%') "
             "AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY mtime ASC LIMIT 1000",
-            (self.now - threshold * 86400,),
+            (MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400),
         )
         filtered = [row for row in rows if is_screenshot(row["name"])]
         for parent, items in sorted(self._group_by_parent(filtered).items()):
@@ -875,9 +888,10 @@ class Analyzer:
         min_size = int(self.config["thresholds"]["min_download_bytes"])
         rows = self._rows(
             "SELECT path,parent,name,size,mtime,inode,dev FROM scan.entries e WHERE kind='file' "
-            "AND path LIKE '/sdcard/Download/%' AND size >= ? AND mtime IS NOT NULL AND mtime < ? "
+            "AND path LIKE '/sdcard/Download/%' AND size >= ? AND mtime IS NOT NULL "
+            "AND mtime >= ? AND mtime <= ? AND mtime < ? "
             "AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY mtime ASC LIMIT 2000",
-            (min_size, self.now - threshold * 86400),
+            (min_size, MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400),
         )
         for parent, items in sorted(self._group_by_parent(rows).items()):
             if self._limit():
@@ -900,9 +914,10 @@ class Analyzer:
         placeholders = ",".join("?" for _ in excluded)
         rows = self._rows(
             f"SELECT path,parent,name,size,mtime,ext,inode,dev FROM scan.entries e WHERE kind='file' AND size >= ? "
-            f"AND mtime IS NOT NULL AND mtime < ? AND lower(ext) NOT IN ({placeholders}) "
+            f"AND mtime IS NOT NULL AND mtime >= ? AND mtime <= ? AND mtime < ? AND lower(ext) NOT IN ({placeholders}) "
             f"AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY size DESC LIMIT ?",
-            (min_size, self.now - threshold * 86400) + excluded + (int(self.config["scan"]["max_large_files"]),),
+            (min_size, MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400)
+            + excluded + (int(self.config["scan"]["max_large_files"]),),
         )
         for row in rows:
             if self._limit():
@@ -926,9 +941,11 @@ class Analyzer:
         placeholders = ",".join("?" for _ in MEDIA_EXTS)
         rows = self._rows(
             f"SELECT path,parent,name,size,mtime,ext,inode,dev FROM scan.entries e WHERE kind='file' "
-            f"AND lower(ext) IN ({placeholders}) AND size >= ? AND mtime IS NOT NULL AND mtime < ? "
+            f"AND lower(ext) IN ({placeholders}) AND size >= ? AND mtime IS NOT NULL "
+            f"AND mtime >= ? AND mtime <= ? AND mtime < ? "
             f"AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) ORDER BY size DESC LIMIT 200",
-            tuple(sorted(MEDIA_EXTS)) + (min_size, self.now - threshold * 86400),
+            tuple(sorted(MEDIA_EXTS))
+            + (min_size, MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400),
         )
         for parent, items in sorted(self._group_by_parent(rows).items()):
             if self._limit():
@@ -950,9 +967,9 @@ class Analyzer:
             """SELECT d.path,d.parent,d.name,d.kind,d.size,d.mtime,d.inode,d.dev FROM scan.entries d
                LEFT JOIN scan.entries c ON c.parent=d.path
                WHERE d.kind='dir' AND c.id IS NULL AND d.path LIKE '/sdcard/%'
-                 AND d.mtime IS NOT NULL AND d.mtime < ?
+                 AND d.mtime IS NOT NULL AND d.mtime >= ? AND d.mtime <= ? AND d.mtime < ?
                ORDER BY d.path LIMIT 400""",
-            (self.now - threshold * 86400,),
+            (MTIME_ANOMALY_MIN, self.now + MTIME_ANOMALY_FUTURE_SECONDS, self.now - threshold * 86400),
         )
         groups: dict[str, list[sqlite3.Row]] = {}
         for row in rows:
