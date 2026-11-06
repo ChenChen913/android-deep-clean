@@ -4,8 +4,9 @@
 
 | 维度 | 当前结果 |
 |---|---|
+| 验证提交 | `65b1cdf`（v1.2.5） |
 | 本地 Mock | 192 passed / 1 skipped（193 collected） |
-| CI | 待本次提交运行 |
+| CI | 运行 `42180263540`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
 | 真实设备只读 | 1 台通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 底座），doctor、scan、analyze、inspect 全部成功 |
 | 真实设备清理/恢复 | 0 台；未执行 execute、purge、restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
