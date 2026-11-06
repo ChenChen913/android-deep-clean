@@ -4,9 +4,9 @@
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | v1.2.8 本地工作区（尚未提交） |
+| 验证提交 | `3613c3f`（v1.2.8） |
 | 本地 Mock | 195 passed / 1 skipped（196 collected） |
-| CI | 待运行 |
+| CI | 运行 `42186180765`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
 | 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
 | 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功，哈希与 mtime 一致；**仅测试文件，未处理用户真实数据** |
 | 真实设备清理/恢复 | 0 台完成正式验收；未对用户真实文件执行 execute、purge、restore |
