@@ -267,6 +267,10 @@ class Doctor:
                 limitations.append("检测到 HarmonyOS 兼容版：沿用 Android 目录与 adb 通路，扫描规则与 Android 相同。")
             if self.transport.name == "mock":
                 limitations.append("当前为 mock 模拟设备，结果仅用于测试，不代表任何真实手机。")
+            if not device.sdk and not device.model:
+                limitations.append("未能读取设备型号/系统版本，平台按 Android 兜底；请先确认 getprop 是否可用。")
+            if self.transport.name == "local" and android_data:
+                limitations.append("local 通路能读取 Android/data 可能来自容器挂载，不代表 scoped storage 下普通应用可读。")
 
             recommended_roots = ["/sdcard"] if sdcard else []
             if internal:
@@ -294,6 +298,7 @@ class Doctor:
             }
             capabilities.update({key: value for key, value in platform_identity_extra(platform).items()
                                  if key not in capabilities})
+        capabilities["transport"] = self.transport.name
 
         return {
             "schema": 1,

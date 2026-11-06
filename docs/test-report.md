@@ -1,13 +1,12 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.3，2026-11-06）
+## 当前版本摘要（v1.2.4，2026-11-06）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `0da6dbc`（v1.2.3） |
-| 本地 Mock | 188 passed / 1 skipped（189 collected） |
-| CI | 运行 `42176663215`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
-| 真实 Android 设备 | 0 台完成验收 |
+| 本地 Mock | 191 passed / 1 skipped（192 collected） |
+| CI | 待本次提交运行 |
+| 真实 Android 设备 | 1 台部分验证：HONOR HLK-AL00 / Android 10，doctor 通过；scan 发现 find 空格缺陷，已修复待重跑 |
 | 真实 HarmonyOS 兼容版 | 0 台完成验收 |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
 | 当前定位 | 开发与只读试用候选版本；**未达到正式清理工具门槛** |
@@ -15,6 +14,20 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.2.4 真实手机扫描修复（2026-11-06）
+
+真实设备反馈：HONOR HLK-AL00（Android 10 / SDK 29），DSH Go proot Ubuntu 24.04，Python 3.12。doctor 成功，但 scan 返回 0 条目。
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| scan 全量失败 | `find` 排除组拼成 `\(-path`，find 报 “paths must precede expression”，xargs 123 | 在 `\(` 与 `\)` 两侧补空格，新增回归测试 |
+| privilege 误判 root | proot 内 uid=0 且存在 su，被当成 Android Root | local 通路要求 `uname -o` 为 Android，否则强制 shell |
+| tier=full 自相矛盾 | 同上 | 修复后为 shell/standard，符合只读共享存储实际 |
+| 设备型号/版本为空 | `getprop` 不在容器 PATH | 回退 `/system/bin/getprop` |
+| capabilities.transport 错误 | 平台画像默认值覆盖实际 transport | 最后强制写入实际 transport |
+
+本地全量：191 passed / 1 skipped。真机 scan/analyze 需在修复后重跑。
 
 ### v1.2.3 缓存风险与空间账目（2026-11-06）
 

@@ -290,11 +290,18 @@ class ShellTransport(Transport):
         return result.returncode, result.stdout, result.stderr
 
     def getprop(self, key: str) -> str:
-        rc, out, _ = self.shell_rc(f"getprop {shell_quote(key)}")
-        return out.strip() if rc == 0 else ""
+        for command in ("getprop", "/system/bin/getprop"):
+            rc, out, _ = self.shell_rc(f"{command} {shell_quote(key)}")
+            if rc == 0 and out.strip():
+                return out.strip()
+        return ""
 
     def device_info(self) -> DeviceInfo:
-        rc, out, _ = self.shell_rc("getprop")
+        rc, out = 1, ""
+        for command in ("getprop", "/system/bin/getprop"):
+            rc, out, _ = self.shell_rc(command)
+            if rc == 0 and out.strip():
+                break
         props: dict[str, str] = {}
         if rc == 0:
             for line in out.splitlines():
@@ -399,7 +406,7 @@ class ShellTransport(Transport):
         if max_depth and max_depth > 0:
             find_expr += f" -maxdepth {int(max_depth)}"
         if clauses:
-            find_expr += " \\(" + " -o ".join(clauses) + " \\) -prune -o"
+            find_expr += " \\( " + " -o ".join(clauses) + " \\) -prune -o"
         find_expr += " -print0 2>/dev/null"
         # xargs batches keep the per-file stat overhead low on toybox.
         return (
@@ -637,21 +644,29 @@ class ShellTransport(Transport):
         rc, out, _ = self._raw_shell(f"{self.su_command} -c id", timeout=45)
         return rc == 0 and "uid=0" in out
 
+    def _android_shell_host(self) -> bool:
+        """True when local shell is Android/Termux, not a proot/container."""
+        rc, out, _ = self._raw_shell("uname -o", timeout=20)
+        return rc == 0 and "android" in out.lower()
+
     def configure_privilege(self, mode: str = "auto") -> str:
         mode = (mode or "auto").lower()
+        real_android = self.name != "local" or self._android_shell_host()
         if mode == "none":
             self._privilege = "shell"
             return self._privilege
         if mode in {"auto", "adb-root"}:
-            if self._is_root_id():
+            if real_android and self._is_root_id():
                 self._privilege = "root"
                 return self._privilege
-            if self._su_works():
+            if real_android and self._su_works():
                 self._privilege = "su"
                 return self._privilege
             self._privilege = "shell"
             return self._privilege
         if mode == "su":
+            if not real_android:
+                raise TransportError("local 环境不是 Android shell（可能在 proot/容器中），不能获得真实 root")
             if self._su_works():
                 self._privilege = "su"
                 return self._privilege

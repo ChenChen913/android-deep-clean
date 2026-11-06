@@ -7,7 +7,7 @@ import hashlib
 import pytest
 
 from adc_lib.config import DEFAULT_CONFIG, load_config, threshold
-from adc_lib.transport import parse_stat_line
+from adc_lib.transport import LocalTransport, ShellTransport, parse_stat_line
 from adc_lib.util import (
     SafetyError,
     ValidationError,
@@ -42,6 +42,35 @@ def test_unsigned_64bit_stat_values_fit_sqlite():
     assert entry is not None
     assert entry.inode == -1
     assert entry.dev == -1
+
+
+def test_find_script_keeps_spaces_around_exclude_group():
+    script = ShellTransport()._find_script("/sdcard", max_depth=2, excludes=["/sdcard/.adc"])
+    assert "\\( -path" in script
+    assert "\\) -prune -o" in script
+    assert "(-path" not in script
+
+
+def test_local_proot_is_not_treated_as_android_root(monkeypatch):
+    transport = LocalTransport()
+    monkeypatch.setattr(transport, "_is_root_id", lambda: True)
+    monkeypatch.setattr(transport, "_su_works", lambda: True)
+    monkeypatch.setattr(transport, "_android_shell_host", lambda: False)
+    assert transport.configure_privilege("auto") == "shell"
+
+
+def test_getprop_falls_back_to_system_bin(monkeypatch):
+    transport = ShellTransport()
+
+    def fake_shell_rc(command, timeout=None):
+        if command.startswith("/system/bin/getprop"):
+            return 0, "29\n", ""
+        if command.startswith("getprop"):
+            return 1, "", "sh: getprop: not found"
+        return 0, "", ""
+
+    monkeypatch.setattr(transport, "shell_rc", fake_shell_rc)
+    assert transport.getprop("ro.build.version.sdk") == "29"
 
 
 def test_parse_stat_line_file():

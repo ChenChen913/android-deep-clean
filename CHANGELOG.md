@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.4 — 修复真实手机扫描阻断与 proot 误判
+
+### Fixed
+- 修复 `find` 排除组缺少空格导致生成 `\(-path`、真实设备 scan 全量失败的问题；新增回归测试。
+- 修复 local/proot 环境中 uid=0 被误判为 Android Root、tier 虚报为 full 的问题；`uname -o` 非 Android 时强制 shell。
+- 修复 `getprop` 不在容器 PATH 时设备型号/系统版本为空的问题，回退到 `/system/bin/getprop`。
+- 修复 doctor 的 `capabilities.transport` 始终显示 adb、与实际 local 不一致的问题。
+- 真实设备环境补充限制说明：容器可读 Android/data 不代表 scoped storage 下普通应用可读。
+
 ## v1.2.3 — 风险收紧、空间账目与鸿蒙媒体库探测
 
 ### Changed
