@@ -144,6 +144,7 @@ def build_plan(analysis: dict[str, Any], review: dict[str, Any], config: dict[st
             "human_size": human_bytes(item.get("total_bytes") or 0),
             "file_count": int(item.get("file_count") or 0),
             "dir_count": int(item.get("dir_count") or 0),
+            "files_digest": item.get("files_digest") or "",
             "confidence": float(item.get("confidence") or 0.5),
             "app_pkg": item.get("app_pkg") or "",
             "app_kind": item.get("app_kind") or "",

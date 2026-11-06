@@ -42,6 +42,7 @@ from .util import (
     age_label,
     atomic_write_json,
     canonical_json,
+    compute_files_digest,
     display_path,
     human_bytes,
     now_iso,
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     ai_review_required INTEGER NOT NULL DEFAULT 0,
     selectable INTEGER NOT NULL DEFAULT 1,
     sample_paths_json TEXT NOT NULL DEFAULT '[]',
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    files_digest TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS candidate_files (
     candidate_id TEXT NOT NULL,
@@ -268,8 +270,8 @@ class Analyzer:
             """INSERT OR REPLACE INTO candidates
             (id,category,title,risk,action,primary_path,total_bytes,file_count,dir_count,confidence,
              app_pkg,app_kind,evidence_json,reasons_json,keep_suggestion,ai_review_required,selectable,
-             sample_paths_json,notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             sample_paths_json,notes,files_digest)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 candidate_id, category, display_title, effective_risk, action, primary_path,
                 total_bytes, len(delete_files), sum(1 for item in final_files if item.kind == "dir"),
@@ -279,6 +281,7 @@ class Analyzer:
                 keep_suggestion, 1 if review_required else 0,
                 0 if effective_risk == "DANGEROUS" else 1,
                 json.dumps(sample_paths, ensure_ascii=False), notes,
+                compute_files_digest(final_files),
             ),
         )
         self.db.executemany(
@@ -639,6 +642,9 @@ class Analyzer:
         )
         checked_files = 0
         checked_bytes = 0
+        if len(size_rows) >= max_groups:
+            self.limitations.append(f"同尺寸重复分组达到上限 {max_groups} 组，可能仍有未检查的分组。")
+        truncated_group_noted = False
         for size_row in size_rows:
             if self._limit():
                 return
@@ -653,6 +659,9 @@ class Analyzer:
                    ORDER BY path LIMIT 200""",
                 (size,),
             )
+            if len(rows) >= 200 and not truncated_group_noted:
+                self.limitations.append("同一大小的文件超过 200 个，仅前 200 个参与完全重复校验。")
+                truncated_group_noted = True
             if len(rows) < 2:
                 continue
             paths = []
@@ -1014,6 +1023,7 @@ class Analyzer:
                     "sample_paths": json.loads(row["sample_paths_json"] or "[]"),
                     "total_bytes": row["total_bytes"], "human_size": human_bytes(row["total_bytes"]),
                     "file_count": row["file_count"], "dir_count": row["dir_count"],
+                    "files_digest": row["files_digest"],
                     "confidence": row["confidence"], "app_pkg": row["app_pkg"], "app_kind": row["app_kind"],
                     "evidence": json.loads(row["evidence_json"] or "[]"),
                     "reasons": json.loads(row["reasons_json"] or "[]"),

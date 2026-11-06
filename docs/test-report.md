@@ -6,6 +6,22 @@
 - 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
 - 任务：共享任务 task-3（v1.0 基线）、task-4（v1.1 双通路扩展）
 
+## v1.1.1 增量复测（2026-11-06）
+
+> 本次修正安全缺口与完整性链，新增 2 条回归用例。下方 v1.1 章节保留为历史基线；其文件指纹表对应 1.1.0 快照，已不再代表当前代码。
+
+| 指标 | 结果 |
+|---|---|
+| 收集用例 | 182（v1.1 基线 180 + 本次新增 2） |
+| 通过 | 180 |
+| 跳过 | 2（与 v1.1 相同的 Windows 符号链接环境限制） |
+| 耗时 | 60.10s（单进程、mock 传输、无真实 adb） |
+| 产品版本 | android-deep-clean 1.1.1 |
+| 新增覆盖 | `guard_path` 内部缓存路径仍受敏感扩展名与 `extra_protected_paths` 约束；analysis.db 清单与计划不一致时 execute 直接拒绝（退出码 3），不触碰任何文件 |
+| 变更文件 | rules.py / analyzer.py / planner.py / executor.py / util.py |
+
+本次修复后，`plan_hash` 与 `selection_hash` 覆盖每个候选的 `files_digest`；篡改 analysis.db 后即使重算计划哈希，逐文件校验仍会拦截越权路径。旧版本状态目录中的计划需要重新 analyze 和 plan。
+
 ## v1.1 增量验证：双通路扩展（电脑端 ADB / PC 功能，task-4）
 
 > 本节为 v1.1 增量结果；第 1-10 节为 v1.0 基线（当时 114 passed / 2 skipped），其结论与覆盖仍然有效，且本轮全量重跑确认旧用例全部通过。

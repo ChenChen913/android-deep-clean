@@ -274,6 +274,54 @@ def _inject_manifest_row(env, candidate_id, path, *, size=0, mtime=0, kind="file
         conn.commit()
     finally:
         conn.close()
+    _rebind_manifest_hashes(env, candidate_id)
+
+
+def _rebind_manifest_hashes(env, candidate_id):
+    """Simulate an attacker who rewrites analysis.db and recomputes the hashes.
+
+    The per-file guards must still hold in that case; the digest gate is covered
+    separately by test_manifest_digest_mismatch_is_refused_before_execution.
+    """
+    from adc_lib.util import compute_files_digest, compute_plan_hash, compute_selection_hash
+
+    digest = compute_files_digest(env.candidate_files(candidate_id))
+    plan = env.plan
+    for item in plan["items"]:
+        if item["id"] == candidate_id:
+            item["files_digest"] = digest
+    plan["plan_hash"] = compute_plan_hash(plan)
+    env.state_path("plan/plan.json").write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+
+    if env.state_path("selection/selection.json").exists():
+        selection = env.selection
+        for item in selection["items"]:
+            if item["id"] == candidate_id:
+                item["files_digest"] = digest
+        selection["plan_hash"] = plan["plan_hash"]
+        selection["selection_hash"] = compute_selection_hash(selection)
+        env.state_path("selection/selection.json").write_text(
+            json.dumps(selection, ensure_ascii=False), encoding="utf-8"
+        )
+
+
+def test_manifest_digest_mismatch_is_refused_before_execution(env):
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    conn = env.analysis_db_connection()
+    try:
+        conn.execute("UPDATE candidate_files SET size=size+1 WHERE path=?", (CACHE + "/a.bin",))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = env.execute()
+    result.expect_error(3)
+    assert "文件清单" in result.stderr
+    assert env.phone.exists(CACHE + "/a.bin"), "execution must stop before touching any file"
+    assert not env.state_path("execution/execution.json").exists()
 
 
 def test_path_traversal_in_manifest_is_refused_with_report(env):

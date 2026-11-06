@@ -6,6 +6,7 @@ __pycache__/
 .adc/
 *.skill
 dist/
+.build/
 .venv/
 .vscode/
 .DS_Store

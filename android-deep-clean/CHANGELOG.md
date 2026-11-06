@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.1 — 安全修正与发布工程化
+
+### Fixed
+- 修复 Root 内部缓存路径（`/data/data/<pkg>/cache`）绕过敏感文件扩展名检查与 `extra_protected_paths` 检查的问题。
+- 修复同尺寸重复文件超过 200 个、或同尺寸分组数达到上限时未在 limitations 中披露的问题。
+
+### Changed
+- `plan_hash` / `selection_hash` 现在覆盖每个候选的文件清单摘要（`files_digest`），execute 前会校验 analysis.db 清单与计划一致；旧计划需重新 analyze 和 plan。
+- 移除 executor 中等价的重复分支。
+- 版本号升级到 1.1.1。
+
+### Added
+- GitHub Actions CI：Ubuntu / Windows × Python 3.9 / 3.13 全量测试。
+- `tools/build_dist.ps1`：从仓库根目录可复现生成 `.skill` 与项目 zip，并用根目录文档覆盖包内副本。
+
 ## v1.1.0 — 双通路扩展（USB + ADB 电脑端）
 
 ### Added

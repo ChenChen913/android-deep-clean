@@ -426,14 +426,21 @@ def guard_path(
 
     hard, hard_reason = _hard_block(path)
     if hard:
-        # internal cache paths are the only exception to the generic /data/data block
-        if (is_under(path, "/data/data") or is_under(path, "/data/user/0")) and category in {"app_cache", "browser_cache"}:
-            allowed, reason, floor = _guard_internal_data(path, category, packages)
-            if allowed:
-                return {"allowed": True, "hard_block": False, "reason": "", "risk_floor": floor}
-        return {"allowed": False, "hard_block": True, "reason": hard_reason, "risk_floor": "DANGEROUS"}
-
-    if is_under(path, "/sdcard/Android"):
+        # internal cache paths are the only exception to the generic /data/data block.
+        # They must still pass every remaining check below (protected filenames,
+        # protected directory names, extra_protected_paths), so we only relax the
+        # hard block instead of returning early.
+        internal_cache = (
+            (is_under(path, "/data/data") or is_under(path, "/data/user/0"))
+            and category in {"app_cache", "browser_cache"}
+        )
+        if not internal_cache:
+            return {"allowed": False, "hard_block": True, "reason": hard_reason, "risk_floor": "DANGEROUS"}
+        allowed, reason, floor = _guard_internal_data(path, category, packages)
+        if not allowed:
+            return {"allowed": False, "hard_block": True, "reason": reason, "risk_floor": floor}
+        risk_floor = floor
+    elif is_under(path, "/sdcard/Android"):
         allowed, reason, floor = _guard_android_tree(path, category, packages)
         if not allowed:
             return {"allowed": False, "hard_block": True, "reason": reason, "risk_floor": floor}

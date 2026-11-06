@@ -71,6 +71,21 @@ def test_sensitive_files_are_protected():
         result = evaluate(path, "app_cache")
         assert result["allowed"] is False, name
         assert result["hard_block"] is True, name
+        # the internal cache exception must not bypass the same protection
+        internal = evaluate("/data/data/com.installed.app/cache/" + name, "app_cache")
+        assert internal["allowed"] is False, name
+        assert internal["hard_block"] is True, name
+
+
+def test_internal_cache_respects_extra_protected_paths():
+    result = evaluate(
+        "/data/data/com.installed.app/cache/a.bin",
+        "app_cache",
+        config={"extra_protected_paths": ["/data/data/com.installed.app/cache"]},
+    )
+    assert result["allowed"] is False
+    assert result["hard_block"] is True
+    assert "额外保护" in result["reason"]
 
 
 def test_protected_dir_components_are_blocked():

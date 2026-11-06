@@ -316,12 +316,43 @@ def json_loads(text: str, what: str = "JSON") -> Any:
         raise ValidationError(f"invalid {what}: {exc}") from exc
 
 
+CANDIDATE_FILE_FIELDS = ("path", "size", "mtime", "inode", "dev", "kind", "role")
+
+
+def _record_dict(record: Any) -> dict[str, Any]:
+    """Normalize dataclass / dict / sqlite3.Row rows into a plain dict."""
+    if isinstance(record, dict):
+        return record
+    to_dict = getattr(record, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    keys = getattr(record, "keys", None)
+    if callable(keys):
+        return {key: record[key] for key in keys()}
+    return dict(record)
+
+
+def compute_files_digest(files: Iterable[Any]) -> str:
+    """Stable digest of a candidate's file manifest.
+
+    The digest binds plan/selection hashes to the exact file rows stored in
+    analysis.db, so editing the database cannot silently change what gets
+    deleted while keeping the same plan hash.
+    """
+    records = []
+    for item in files:
+        data = _record_dict(item)
+        records.append({key: data.get(key) for key in CANDIDATE_FILE_FIELDS})
+    records.sort(key=lambda row: str(row.get("path") or ""))
+    return sha256_text(canonical_json(records))
+
+
 def plan_hash_payload(plan: dict[str, Any]) -> dict[str, Any]:
     """Canonical fields covered by plan_hash (shared by planner and executor)."""
     payload = [
         {key: item.get(key) for key in (
             "id", "category", "risk", "action", "primary_path",
-            "total_bytes", "file_count", "selectable",
+            "total_bytes", "file_count", "selectable", "files_digest",
         )}
         for item in plan.get("items") or []
     ]
@@ -349,7 +380,7 @@ def selection_hash_payload(selection: dict[str, Any]) -> dict[str, Any]:
         "items": [
             {key: item.get(key) for key in (
                 "id", "category", "risk", "action", "primary_path",
-                "total_bytes", "file_count", "selectable",
+                "total_bytes", "file_count", "selectable", "files_digest",
             )}
             for item in selection.get("items") or []
         ],

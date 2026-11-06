@@ -109,7 +109,7 @@ Shizuku 环境用 --transport rish --rish-path rish。其余流程和电脑端�
 python -m pytest tests -q
 ~~~
 
-测试不需要手机：使用 mock transport 和临时设备树。当前全量结果：178 passed / 2 skipped / 0 failed（180 collected）。2 条 skip 为 Windows 真实符号链接权限限制；电脑端 ADB 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
+测试不需要手机：使用 mock transport 和临时设备树。当前全量结果：180 passed / 2 skipped / 0 failed（182 collected）。2 条 skip 为 Windows 真实符号链接权限限制；电脑端 ADB 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
 
 ## 文档
 

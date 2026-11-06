@@ -30,6 +30,7 @@ from .util import (
     SafetyError,
     ValidationError,
     atomic_write_json,
+    compute_files_digest,
     compute_plan_hash,
     compute_selection_hash,
     display_path,
@@ -147,6 +148,11 @@ class Executor:
             if candidate["category"] != plan_item.get("category") or candidate["action"] != plan_item.get("action"):
                 raise SafetyError(f"项目 {item_id} 的 plan 与 analysis 不一致")
             rows = conn.execute("SELECT * FROM candidate_files WHERE candidate_id=? ORDER BY path", (item_id,)).fetchall()
+            expected_digest = str(plan_item.get("files_digest") or "")
+            if not expected_digest:
+                raise SafetyError(f"项目 {item_id} 缺少文件清单摘要，拒绝执行；请重新 analyze 和 plan")
+            if compute_files_digest(rows) != expected_digest:
+                raise SafetyError(f"项目 {item_id} 的文件清单与计划不一致（analysis.db 可能被修改），拒绝执行")
             manifests[item_id] = [dict(row) for row in rows]
         return conn, manifests
 
@@ -412,9 +418,7 @@ class Executor:
 
         # Remove now-empty directories, only via rmdir; never recursive.
         dirs_to_try = list(expected_dirs)
-        if action == "clean_dir_children" and target_dir and category == "residue":
-            dirs_to_try.append({"path": target_dir, "kind": "dir"})
-        if action == "clean_dir_children" and target_dir and category != "residue":
+        if action == "clean_dir_children" and target_dir:
             dirs_to_try.append({"path": target_dir, "kind": "dir"})
         dirs_to_try.sort(key=lambda row: row.get("path", "").count("/"), reverse=True)
         for row in dirs_to_try:
