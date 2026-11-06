@@ -15,6 +15,28 @@ from typing import Any, Iterable
 
 RISK_ORDER = {"SAFE": 0, "CAUTION": 1, "DANGEROUS": 2}
 RISK_LABELS = {"SAFE": "安全", "CAUTION": "谨慎", "DANGEROUS": "危险"}
+SQLITE_INT_BITS = 64
+SQLITE_INT_MASK = (1 << SQLITE_INT_BITS) - 1
+SQLITE_INT_SIGN = 1 << (SQLITE_INT_BITS - 1)
+
+
+def sqlite_int64(value: Any) -> int | None:
+    """Normalize an unsigned 64-bit stat value into SQLite's signed range.
+
+    Windows file IDs (st_ino/st_dev) are unsigned 64-bit and can exceed
+    2**63-1, which sqlite3 refuses to bind.  Two's-complement wrapping keeps
+    distinct values distinct while staying inside the signed 64-bit range.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    number &= SQLITE_INT_MASK
+    return number - (1 << SQLITE_INT_BITS) if number & SQLITE_INT_SIGN else number
+
+
 ACTION_LABELS = {
     "delete_files": "隔离/删除文件",
     "clean_dir_children": "清理目录内容",

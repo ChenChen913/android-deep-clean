@@ -31,6 +31,7 @@ from .util import (
     is_under,
     normalize_device_path,
     read_json,
+    sqlite_int64,
 )
 
 _MOUNT_ALIASES = (
@@ -352,8 +353,8 @@ class MockTransport(Transport):
             mtime=int(st.st_mtime),
             atime=int(st.st_atime),
             ctime=int(st.st_ctime),
-            inode=int(st.st_ino),
-            dev=int(st.st_dev),
+            inode=sqlite_int64(st.st_ino),
+            dev=sqlite_int64(st.st_dev),
             nlink=int(st.st_nlink),
             mode=int(st.st_mode),
             uid=int(st.st_uid),
@@ -379,8 +380,8 @@ class MockTransport(Transport):
             mtime=int(st.st_mtime),
             atime=int(st.st_atime),
             ctime=int(st.st_ctime),
-            inode=int(st.st_ino),
-            dev=int(st.st_dev),
+            inode=sqlite_int64(st.st_ino),
+            dev=sqlite_int64(st.st_dev),
             nlink=int(st.st_nlink),
             mode=int(st.st_mode),
             uid=int(st.st_uid),

@@ -34,6 +34,7 @@ from .util import (
     is_under,
     normalize_device_path,
     shell_quote,
+    sqlite_int64,
 )
 
 STAT_FORMAT = "%f|%s|%Y|%X|%Z|%i|%d|%h|%a|%u|%n"
@@ -114,8 +115,8 @@ def parse_stat_line(line: str) -> Entry | None:
         mtime=_int_or_none(mtime),
         atime=_int_or_none(atime),
         ctime=_int_or_none(ctime),
-        inode=_int_or_none(inode),
-        dev=_int_or_none(dev),
+        inode=sqlite_int64(inode),
+        dev=sqlite_int64(dev),
         nlink=_int_or_none(nlink),
         mode=mode,
         uid=_int_or_none(uid),

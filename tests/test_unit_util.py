@@ -28,10 +28,22 @@ from adc_lib.util import (
     sha256_text,
     shell_quote,
     split_csv,
+    sqlite_int64,
 )
 
 
 # ---------------------------------------------------------------- stat lines
+def test_unsigned_64bit_stat_values_fit_sqlite():
+    assert sqlite_int64(123) == 123
+    assert sqlite_int64(2**63) == -(2**63)
+    assert sqlite_int64(2**64 - 1) == -1
+    line = "81a4|1|1700000000|1700000100|1700000200|18446744073709551615|18446744073709551615|1|644|1000|/sdcard/x"
+    entry = parse_stat_line(line)
+    assert entry is not None
+    assert entry.inode == -1
+    assert entry.dev == -1
+
+
 def test_parse_stat_line_file():
     line = "81a4|1234|1700000000|1700000100|1700000200|555|2049|1|644|1000|/sdcard/DCIM/Camera/a b.jpg"
     entry = parse_stat_line(line)

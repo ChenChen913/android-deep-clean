@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.1 — 修复 Windows CI 大整数写库失败
+
+### Fixed
+- Windows runner 的 `st_ino` / `st_dev` 为无符号 64 位，超过 SQLite 有符号 64 位上限，扫描写库时报 `Python int too large to convert to SQLite INTEGER`。
+- 新增 `sqlite_int64()`，对 mock 自体文件与设备 `stat` 输出统一做二补码归一化；inode/dev 仍保持区分度，不会因截断而全部相同。
+- 新增回归测试：`2**63`、`2**64-1` 与正常整数，以及超范围 stat 行解析。
+
+### Changed
+- 版本号升级到 1.2.1。
+
 ## v1.2.0 — HarmonyOS 适配（兼容版 + NEXT）
 
 ### Added

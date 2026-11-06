@@ -6,6 +6,19 @@
 - 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
 - 任务：共享任务 task-3（v1.0 基线）、task-4（v1.1 双通路扩展）
 
+## v1.2.1 CI 修复复测（2026-11-06）
+
+> 本次只修 CI 环境差异，不改变清理规则。
+
+| 指标 | 结果 |
+|---|---|
+| 失败现象 | windows-latest 上 76 条用例同日失败，报 `Python int too large to convert to SQLite INTEGER` |
+| 根因 | Windows 的 `st_ino` / `st_dev` 为无符号 64 位，超过 SQLite 有符号 64 位上限；本地文件 ID 较小所以未复现 |
+| 修复 | `sqlite_int64()` 对 inode/dev 做二补码归一化，mock 与设备 stat 共用 |
+| 回归用例 | `2**63`、`2**64-1`、普通整数、超范围 stat 行 |
+| 本地全量 | 185 passed / 2 skipped |
+| CI 结果 | 以 GitHub Actions 最新运行结果为准 |
+
 ## v1.2.0 HarmonyOS 适配复测（2026-11-06）
 
 > 本轮只做平台识别、路径守卫与 mock 全链路验证；没有真实 HarmonyOS 设备，所有 hdc 真机能力均标记为待验证。
