@@ -4,8 +4,9 @@
 
 | 维度 | 当前结果 |
 |---|---|
+| 验证提交 | `6d86354`（v1.2.4） |
 | 本地 Mock | 191 passed / 1 skipped（192 collected） |
-| CI | 待本次提交运行 |
+| CI | 运行 `42178935692`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
 | 真实 Android 设备 | 1 台部分验证：HONOR HLK-AL00 / Android 10，doctor 通过；scan 发现 find 空格缺陷，已修复待重跑 |
 | 真实 HarmonyOS 兼容版 | 0 台完成验收 |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
