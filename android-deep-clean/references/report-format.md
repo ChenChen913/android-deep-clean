@@ -136,3 +136,13 @@
 - 不确定的写“待确认/建议保留”，不要写成“垃圾”。
 - 权限不足写进“限制”章节，不隐藏在脚注。
 - 失败项逐条列路径和原因；不要只给总数。
+
+
+## 6. v1.1 电脑端新增字段
+
+- 所有阶段（doctor/scan/analysis/plan/selection/execution）应展示 device_identity：serial、model、id 短哈希。
+- execution.json 额外字段：transport、device_identity、backup_dir/backup_root/backup_files/backup_bytes、abort_reason、status=aborted。
+- execution/backup-manifest.json：每个备份文件的手机路径、电脑路径、SHA-256、大小、校验方式。
+- export 目录：analysis-items.csv、analysis-files.csv、execution-items.csv、export-manifest.json。
+- scan：previous_scan（上一轮归档路径）、device_identity；history 命令列出当前与归档快照。
+- 电脑端报告必须写明“操作的是哪台设备”以及“断连/备份/权限失败”的实际结果。

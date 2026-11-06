@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .adc-state/
 .tmp-smoke/
+.tmp-ext/
 .adc/
 *.skill
 dist/

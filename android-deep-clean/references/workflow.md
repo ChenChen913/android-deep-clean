@@ -2,6 +2,8 @@
 
 所有命令中的 $Skill 指向技能目录，$State 指向可写状态目录。通用参数写在子命令之后。
 
+本文件以电脑端 ADB 为例；手机端只需把 --transport adb --serial <序列号> 换成 --transport local（Termux）或 --transport rish --rish-path rish，其余规则/命令不变。电脑端完整说明见 usb-adb-workflow.md，架构见 dual-path-architecture.md。
+
 ## 通用前置
 
 ~~~powershell

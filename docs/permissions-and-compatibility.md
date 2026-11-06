@@ -2,6 +2,20 @@
 
 本文件面向用户与运维；技术细节与来源见 docs/research-android-storage.md。
 
+## 0. 双通路能力对比
+
+| 能力 | 手机端 local/rish | 电脑端 ADB | Root |
+|---|---|---|---|
+| 共享存储扫描 | Termux 权限内 / 是 | 是 | 是 |
+| Android/data 读取 | 视版本/Shizuku | 通常可（实现细节，OEM 可能收紧） | 是 |
+| /data/data 内部缓存 | 否 | 否 | 是 |
+| 重复文件哈希 | 手机/本地 | 手机端或 --hash-mode pc | 手机 |
+| 电脑备份 | 手动 | --backup-to（校验大小/SHA-256） | --backup-to |
+| 多设备防误操作 | 本机 | devices + --serial + device_identity 绑定 | 同 ADB |
+| 断连中止 | 进程终止 | health_ok + aborted | 同 ADB |
+
+两条通路使用同一套分类/风险/确认/验证规则。电脑端多设备时未指定 --serial 会直接拒绝；执行前会校验计划设备身份。
+
 ## 1. 权限等级
 
 | 等级 | 如何获得 | 可扫描 | 不可扫描 | Skill 行为 |
@@ -54,6 +68,8 @@ Android 版本差异：
 
 - 无法读取其他应用 /data/data（非 root）；无法清系统缓存分区。
 - 部分 ROM 的 Android/data 对 shell 不可读；doctor 实测决定。
+- 电脑端多设备/未授权/离线设备必须先通过 devices + --serial 明确目标；设备身份不匹配会拒绝执行。
+- 电脑备份需要电脑磁盘空间；备份校验失败时不会清理源文件。
 - 文件名含换行/特殊字符时 stat 行解析可能跳过；报告不做完整保证。
 - 相似图片（非完全重复）不自动判重；需要 AI 预览 + 用户确认。
 - atime 通常不可靠，年龄按 mtime。

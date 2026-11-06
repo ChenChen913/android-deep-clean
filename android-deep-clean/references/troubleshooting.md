@@ -78,3 +78,17 @@
 - 部分 ROM 的 Android/data 对 shell 不可读；以实际探测为准。
 - Android 11+ 的 FUSE 放行是 AOSP 实现细节，不是 API 契约；OEM 可收紧。
 - 所有待真机验证项见 docs/research-android-storage.md 第 10 节。
+
+
+## 9. 电脑端双通路新增故障（v1.1）
+
+| 现象 | 处理 |
+|---|---|
+| devices 显示多台设备但未 --serial | 用 --serial <序列号>；Skill 会拒绝自动选择 |
+| execute 提示“当前连接的设备与计划设备不一致” | 说明插错手机或设备身份变了；重新 scan/analyze/plan/select，不要复用旧令牌 |
+| execute 状态 aborted | 设备断开；重连同一序列号后 verify；未执行项目保持原状 |
+| --backup-to 失败 | 清理会跳过该文件且源文件保留；检查电脑磁盘/权限/USB 连接 |
+| 备份 SHA-256 不一致 | 传输损坏；自动删除不完整备份并跳过清理，重新执行 |
+| --hash-mode pc 很慢 | 只对大小相同的重复候选拉文件；可调低 max_hash_files/max_hash_total_bytes |
+| export 无 execution-items.csv | 尚未执行清理；先 execute 再 export |
+| history 为空 | 只归档上一轮；至少运行两次 scan |

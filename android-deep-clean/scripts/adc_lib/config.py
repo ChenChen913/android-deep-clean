@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_large_files": 200,
         "deadline_seconds": 3600,
         "include_internal": "auto",
+        "hash_mode": "device",
     },
     "report": {
         "sample_paths": 12,

@@ -6,7 +6,7 @@ from typing import Any
 
 from .models import AccessProbe, DeviceInfo, PackageIndex
 from .transport import Transport, TransportError
-from .util import TransportError as _TE, human_bytes, now_iso
+from .util import human_bytes, now_iso, sha256_text, stable_id
 
 PROBE_PATHS = [
     "/sdcard",
@@ -24,6 +24,30 @@ PROBE_PATHS = [
 PROBE_COMMANDS = ["find", "stat", "xargs", "sha256sum", "md5sum", "df", "pm", "realpath", "rm", "mv", "rmdir", "su"]
 
 
+def device_identity(info: DeviceInfo) -> dict[str, Any]:
+    """Stable identity used to bind scan/plan/selection/execution to one device.
+
+    Serial is the primary key when available; model/fingerprint are included as
+    secondary evidence.  The short id is safe to display in reports.
+    """
+    serial = str(info.serial or "").strip() or "unknown"
+    fingerprint = str(info.fingerprint or "").strip()
+    material = "|".join(
+        [serial, fingerprint, str(info.manufacturer or ""), str(info.model or ""), str(info.sdk or 0)]
+    )
+    return {
+        "id": stable_id("device", material),
+        "serial": serial,
+        "manufacturer": info.manufacturer,
+        "model": info.model,
+        "sdk": info.sdk,
+        "release": info.release,
+        "fingerprint": fingerprint,
+        "android": info.android,
+        "hash_material_sha256": sha256_text(material),
+    }
+
+
 class Doctor:
     def __init__(self, transport: Transport, config: dict[str, Any], *, root_mode: str = "auto", try_adb_root: bool = False) -> None:
         self.transport = transport
@@ -36,6 +60,7 @@ class Doctor:
         if self.transport.name == "mock":
             return
         try:
+            self.transport.ensure_ready()
             rc, out, err = self.transport.shell_rc("true", timeout=30)
         except TransportError:
             raise
@@ -77,6 +102,7 @@ class Doctor:
             privilege = getattr(self.transport, "privilege", "shell")
 
         device = self.transport.device_info()
+        identity = device_identity(device)
         commands = self._probe_commands()
         packages = self.transport.list_packages()
         probes = {path: self.transport.access(path).to_dict() for path in PROBE_PATHS}
@@ -175,6 +201,8 @@ class Doctor:
                 "rish_path": getattr(self.transport, "rish_path", ""),
             },
             "device": device.to_dict(),
+            "device_identity": identity,
+            "adb_devices": getattr(self.transport, "adb_devices", []) if self.transport.name == "adb" else [],
             "android": device.android,
             "packages": {
                 "available": packages.available,
@@ -201,6 +229,7 @@ def doctor_markdown(report: dict[str, Any]) -> str:
         f"- 生成时间：{report.get('generated_at')}",
         f"- 传输方式：{report.get('transport')}",
         f"- 设备：{((report.get('device') or {}).get('manufacturer') or '')} {((report.get('device') or {}).get('model') or '')}".strip(),
+        f"- 设备身份：{(report.get('device_identity') or {}).get('id', '-')}（序列号：{(report.get('device_identity') or {}).get('serial', '-')}）",
         f"- 系统：{report.get('android')}",
         f"- 权限级别：{caps.get('tier_label')}（{caps.get('privilege')}）",
         f"- 应用包：已安装 {((report.get('packages') or {}).get('installed_count'))}，未安装包记录 {((report.get('packages') or {}).get('uninstalled_count'))}",

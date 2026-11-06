@@ -96,3 +96,23 @@ device JSON 字段：`serial, sdk, release, manufacturer, model, build_type, abi
 - 测试结束清理临时状态目录。
 - 测试只通过 CLI subprocess 或导入 adc_lib 函数；不得修改 android-deep-clean/。
 - 反向测试必须断言“文件仍存在”“没有产生 execution”或明确失败报告。
+
+
+## v1.1 双通路扩展（2026-11-06）
+
+新增命令/参数：
+- devices --adb-path adb：列出 ADB 设备；不依赖 state，不需要 --serial。
+- doctor/scan/analyze/execute/verify 支持 --transport adb + --serial <序列号>；多设备必须指定。
+- analyze --hash-mode device|pc：电脑本地哈希重复候选；analysis.hash_mode 记录。
+- execute --backup-to <PC目录>：清理前备份并校验；execution.backup_files/backup_bytes/backup_root；backup-manifest.json；备份失败跳过该文件。
+- export --out <目录>：analysis-items.csv / analysis-files.csv / execution-items.csv。
+- history：列出 state/history/scan-* 与当前扫描。
+- plan/selection 携带 device_identity；plan_hash/selection_hash 覆盖设备身份；execute 前校验当前设备身份。
+- execute 中途断连：status=aborted，未执行项目 aborted，不继续破坏性操作。
+- scan 自动归档上一轮快照到 history/scan-*（最多 10 份）。
+
+新增/更新测试契约：
+- 设备身份不一致 execute 必须 exit 3，不产生 execution.json，fixture 不变。
+- --backup-to 的备份文件内容/SHA-256 与源文件一致；备份失败时源文件仍在。
+- --hash-mode pc 必须在不调用设备 sha256 的情况下识别完全重复候选。
+- export 行数与 analysis items/files 一致；history 在第二次 scan 后出现归档。

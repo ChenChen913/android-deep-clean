@@ -19,13 +19,14 @@ from .analyzer import Analyzer
 from .config import load_config
 from .device import Doctor, doctor_markdown
 from .executor import Executor, load_execution, purge as purge_execution, restore as restore_execution, verify as verify_execution
+from .exporter import export_state
 from .models import PackageIndex
 from .planner import load_analysis, run_plan, run_select
 from .reports import recheck_markdown
 from .rules import category_title
 from .scanner import Scanner, load_packages, load_snapshot
 from .state import State
-from .transport import Transport, create_transport
+from .transport import AdbTransport, Transport, create_transport
 from .util import (
     AdcError,
     SafetyError,
@@ -88,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"android-deep-clean {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("devices", help="列出 USB/无线 ADB 设备与授权状态（电脑端）")
+    add_common(p)
+
+    p = sub.add_parser("history", help="查看历史扫描快照（电脑端状态目录）")
+    add_common(p)
+
+    p = sub.add_parser("export", help="导出 CSV（候选清单/完整文件清单/执行结果）")
+    add_common(p)
+    p.add_argument("--out", default="", help="导出目录（默认 <state>/export）")
+
     p = sub.add_parser("doctor", help="检查设备、版本、存储、权限能力")
     add_common(p)
 
@@ -100,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("analyze", help="基于快照生成候选、证据、风险与清理前报告")
     add_common(p)
+    p.add_argument("--hash-mode", dest="hash_mode", choices=["device", "pc"], default="", help="重复文件哈希位置：device（手机）或 pc（USB 拉到电脑计算）")
 
     p = sub.add_parser("inspect", help="查看某个候选的完整清单/预览，供 AI 深度复核")
     add_common(p)
@@ -128,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", required=True, help="select 输出的确认令牌")
     p.add_argument("--mode", choices=["quarantine", "delete"], default="", help="默认沿用 selection.mode")
     p.add_argument("--allow-permanent-delete", dest="allow_permanent_delete", action="store_true")
+    p.add_argument("--backup-to", dest="backup_to", default="", help="电脑端备份目录：执行前把选中的文件复制并校验到电脑")
 
     p = sub.add_parser("verify", help="验证执行结果；不修改文件")
     add_common(p)
@@ -159,6 +172,8 @@ def _config(args: Any) -> dict[str, Any]:
 
 def _transport(args: Any, config: dict[str, Any], *, configure: bool = True) -> Transport:
     transport = create_transport(args, config)
+    if transport.name == "adb":
+        transport.ensure_ready()
     if configure:
         try:
             transport.configure_privilege(args.root_mode)
@@ -175,7 +190,14 @@ def _ensure_doctor(state: State, transport: Transport, config: dict[str, Any], a
     if not force and existing and Path(existing).exists():
         report = read_json(existing, default=None)
         if isinstance(report, dict):
-            return report
+            cached_serial = str(((report.get("device_identity") or {}).get("serial")) or "")
+            current_serial = ""
+            try:
+                current_serial = str(transport.device_serial() or "")
+            except Exception:  # noqa: BLE001
+                current_serial = ""
+            if not cached_serial or not current_serial or cached_serial == current_serial:
+                return report
     doctor = Doctor(transport, config, root_mode=args.root_mode, try_adb_root=bool(getattr(args, "try_adb_root", False)))
     report = doctor.run()
     out_dir = state.dir("doctor")
@@ -193,6 +215,81 @@ def _print_human(lines: list[str]) -> None:
 
 def _safe_error(message: str) -> None:
     print(f"ADC_ERROR: {message}", file=sys.stderr)
+
+
+def cmd_devices(args: Any, config: dict[str, Any]) -> int:
+    transport = AdbTransport(adb_path=args.adb_path or "adb")
+    try:
+        devices = transport.list_devices()
+    except TransportError as exc:
+        print(f"ADC_ERROR: {exc}", file=sys.stderr)
+        return 4
+    from .transport import _ADB_STATE_LABELS
+
+    enriched = [dict(item, label=_ADB_STATE_LABELS.get(item["state"], item["state"])) for item in devices]
+    if args.json:
+        print(json.dumps({"adb_path": transport.adb_path, "devices": enriched}, ensure_ascii=False, indent=2))
+    else:
+        if not devices:
+            print("未检测到 Android 设备。")
+        else:
+            print(f"ADB：{transport.adb_path}")
+            print("序列号\t状态\t说明\t详情")
+            for item in enriched:
+                print(f"{item['serial']}\t{item['state']}\t{item.get('label', '')}\t{item.get('details', '')}")
+        print("\n提示：只有一个设备且状态为 device 时可省略 --serial；多设备必须用 --serial 指定目标。")
+    return 0
+
+
+def cmd_export(args: Any, config: dict[str, Any]) -> int:
+    state = _state(args)
+    manifest = export_state(state, args.out or None)
+    if args.json:
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+    else:
+        print("CSV 导出完成")
+        for path in manifest.get("files") or []:
+            print(f"- {path}")
+    return 0
+
+
+def cmd_history(args: Any, config: dict[str, Any]) -> int:
+    state = _state(args)
+    entries: list[dict[str, Any]] = []
+    current_scan = state.get_file("scan")
+    if current_scan and Path(current_scan).exists():
+        meta = read_json(state.get_file("scan_meta"), default={}) or {}
+        entries.append({
+            "kind": "current",
+            "path": current_scan,
+            "scanned_at": meta.get("scanned_at", ""),
+            "stats": meta.get("stats", {}),
+            "device_identity": meta.get("device_identity", {}),
+        })
+    history_dir = state.root / "history"
+    if history_dir.is_dir():
+        for directory in sorted(history_dir.glob("scan-*"), key=lambda p: p.stat().st_mtime, reverse=True):
+            meta = read_json(directory / "snapshot-meta.json", default={}) or {}
+            entries.append({
+                "kind": "archived",
+                "path": str(directory / "snapshot.db"),
+                "scanned_at": meta.get("scanned_at", ""),
+                "stats": meta.get("stats", {}),
+                "device_identity": meta.get("device_identity", {}),
+                "archived_dir": str(directory),
+            })
+    if args.json:
+        print(json.dumps({"state": str(state.root), "scans": entries}, ensure_ascii=False, indent=2))
+    else:
+        if not entries:
+            print("暂无扫描历史。先运行 scan。")
+        else:
+            print(f"状态目录：{state.root}")
+            for entry in entries:
+                stats = entry.get("stats") or {}
+                print(f"- {entry.get('scanned_at') or '-'}  {entry.get('kind')}  "
+                      f"{stats.get('files', 0)} 文件 / {human_bytes(stats.get('bytes', 0))}  {entry.get('path')}")
+    return 0
 
 
 def cmd_doctor(args: Any, config: dict[str, Any]) -> int:
@@ -239,7 +336,8 @@ def cmd_analyze(args: Any, config: dict[str, Any]) -> int:
     conn, scan_meta = load_snapshot(state)
     packages = load_packages(conn)
     transport = _transport(args, config)
-    analyzer = Analyzer(transport, config, state, conn, scan_meta, packages)
+    hash_mode = args.hash_mode or str(config["scan"].get("hash_mode") or "device")
+    analyzer = Analyzer(transport, config, state, conn, scan_meta, packages, hash_mode=hash_mode)
     analysis = analyzer.run()
     conn.close()
     summary = analysis.get("summary") or {}
@@ -372,7 +470,7 @@ def cmd_execute(args: Any, config: dict[str, Any]) -> int:
         raise ValidationError("plan.json 或 selection.json 无效")
     mode = args.mode or str(selection.get("mode") or "quarantine")
     transport = _transport(args, config)
-    executor = Executor(transport, config, state)
+    executor = Executor(transport, config, state, backup_dir=(args.backup_to or None))
     execution = executor.run(plan, selection, args.token, mode, bool(args.allow_permanent_delete))
     summary = execution.get("summary") or {}
     if args.json:
@@ -384,9 +482,13 @@ def cmd_execute(args: Any, config: dict[str, Any]) -> int:
         print(f"- 处理逻辑大小：{human_bytes(summary.get('processed_bytes', 0))}")
         print(f"- 已释放：{human_bytes(summary.get('released_bytes', 0))}（隔离模式需 purge）")
         print(f"- 隔离区：{execution.get('quarantine_root') or '-'}")
+        if execution.get("backup_files"):
+            print(f"- 电脑备份：{execution.get('backup_files')} 个 / {human_bytes(execution.get('backup_bytes', 0))} -> {execution.get('backup_root')}")
         print(f"- Purge 令牌：{execution.get('purge_token')}")
         print(f"- 报告：{state.get_file('execution_report')}")
-        if execution.get("status") != "completed":
+        if execution.get("status") == "aborted":
+            print(f"⚠ 执行已中止：{execution.get('abort_reason') or '设备断开'}")
+        elif execution.get("status") != "completed":
             print("⚠ 有失败项，请查看执行报告；失败文件仍留在原位置。")
         print("\n下一步：verify --state " + args.state)
     return 0 if execution.get("status") == "completed" else 6
@@ -453,7 +555,7 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
     meta = scanner.scan(progress=not args.quiet)
     conn, scan_meta = load_snapshot(new_state)
     packages = load_packages(conn)
-    analyzer = Analyzer(transport, config, new_state, conn, scan_meta, packages)
+    analyzer = Analyzer(transport, config, new_state, conn, scan_meta, packages, hash_mode=str(config["scan"].get("hash_mode") or "device"))
     analysis = analyzer.run()
     conn.close()
     prev_map = {(item.get("category"), item.get("primary_path")): item for item in previous.get("items") or []}
@@ -502,6 +604,12 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
 
 def dispatch(args: Any) -> int:
     config = _config(args)
+    if args.command == "devices":
+        return cmd_devices(args, config)
+    if args.command == "history":
+        return cmd_history(args, config)
+    if args.command == "export":
+        return cmd_export(args, config)
     if args.command == "doctor":
         return cmd_doctor(args, config)
     if args.command == "scan":

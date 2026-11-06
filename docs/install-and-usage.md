@@ -1,5 +1,16 @@
 # 安装与使用说明
 
+## 0. 双通路（手机端 / 电脑端）
+
+本 Skill 支持两条通路，共用同一套规则与安全机制：
+
+| 通路 | 环境 | 连接 | 命令示例 |
+|---|---|---|---|
+| 手机端 Agent | Android 手机上的 Termux / Agent | 本机 shell 或 Shizuku rish | --transport local / rish |
+| 电脑端 Agent | Windows 11 + USB 数据线 | ADB（Platform Tools） | --transport adb --serial <序列号> |
+
+电脑端不是另一套清理系统：分类、风险、保护规则、确认令牌、隔离/备份、日志与验证完全共用。电脑端完整流程见 references/usb-adb-workflow.md。
+
 ## 1. 组成与要求
 
 - Python 3.9+（只用标准库；Windows 上 Python 3.13 已测试）。
@@ -48,17 +59,20 @@ Agent 也可以直接调用项目内脚本；安装只是为了平台自动发�
 
 ## 3. 手机准备
 
-### 3.1 ADB（推荐）
+### 3.1 ADB（电脑端推荐）
 
 ~~~powershell
 adb version
-adb devices
+adb devices -l
 adb shell getprop ro.build.version.release
 ~~~
 
-- 手机：开发者选项 → USB 调试；连接后确认 RSA 授权。
+- 安装 Android 官方 Platform Tools 即可，不需要 Android Studio。
+- 手机：开发者选项 → USB 调试；数据线连接；解锁手机并允许 RSA 授权。
+- 状态必须是 device；unauthorized 去手机点允许；offline 重新插拔/重开调试。
 - 无线调试（Android 11+）：无线调试 → 使用配对码 → adb pair IP:PORT → adb connect IP:DEBUG_PORT。
-- 多设备：命令加 --serial <序列号>。
+- 多设备：必须 --serial <序列号>；可用 devices 命令查看。
+- 手机端则用 --transport local（Termux）或 --transport rish（Shizuku）。
 
 ### 3.2 Shizuku
 
@@ -80,13 +94,17 @@ $Skill = "$env:USERPROFILE\.agents\skills\android-deep-clean"
 $State = ".adc-state"
 ~~~
 
-### 4.1 体检
+### 4.1 设备发现与体检
 
 ~~~powershell
-python "$Skill\scripts\adc.py" doctor --state $State --transport adb
+# 电脑端：列出所有 ADB 设备与授权状态
+python "$Skill\scripts\adc.py" devices --adb-path adb
+
+# 单设备可省略 --serial；多设备必须指定
+python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial <序列号>
 ~~~
 
-看权限级别和存储；若 Android/data 不可读，报告会明确说明。
+看权限级别、设备身份和存储；若 Android/data 不可读，报告会明确说明。
 
 ### 4.2 扫描（只读）
 
@@ -103,10 +121,14 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb
 ### 4.3 分析
 
 ~~~powershell
-python "$Skill\scripts\adc.py" analyze --state $State --transport adb
+# 设备端计算重复文件哈希（默认）
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号>
+
+# 或：只把大小相同的重复候选通过 USB 拉到电脑，本地计算 SHA-256
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号> --hash-mode pc
 ~~~
 
-产出清理前报告、analysis-summary.json、review-template.json。
+产出清理前报告、analysis-summary.json、review-template.json，并记录 hash_mode。
 
 ### 4.4 AI 复核
 
@@ -136,10 +158,13 @@ python "$Skill\scripts\adc.py" select --state $State --transport adb --ids app_c
 
 输出确认令牌。把清单给用户看，得到明确确认后再执行。用户拒绝就停止。
 
-### 4.7 执行（默认隔离）
+### 4.7 执行（默认隔离，可备份到电脑）
 
 ~~~powershell
-python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <确认令牌>
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <确认令牌>
+
+# 清理前备份到电脑：备份失败则跳过该文件，源文件保留
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <确认令牌> --backup-to D:\phone-backup
 ~~~
 
 永久删除（仅 SAFE，用户明确要求；selection 必须也使用 delete 模式）：
@@ -149,10 +174,16 @@ python "$Skill\scripts\adc.py" select --state $State --transport adb --all-safe 
 python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <令牌> --mode delete --allow-permanent-delete
 ~~~
 
-### 4.8 验证与释放
+### 4.8 验证、导出与释放
 
 ~~~powershell
-python "$Skill\scripts\adc.py" verify --state $State --transport adb
+python "$Skill\scripts\adc.py" verify --state $State --transport adb --serial <序列号>
+
+# CSV 导出：候选 / 完整文件清单 / 执行结果
+python "$Skill\scripts\adc.py" export --state $State --out D:\phone-report
+
+# 历史扫描快照
+python "$Skill\scripts\adc.py" history --state $State
 
 # 确认无误后永久释放隔离区（不可恢复）
 python "$Skill\scripts\adc.py" quarantine purge --state $State --transport adb --token <PURGE_TOKEN>

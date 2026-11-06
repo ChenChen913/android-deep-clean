@@ -39,6 +39,36 @@ from .util import (
 STAT_FORMAT = "%f|%s|%Y|%X|%Z|%i|%d|%h|%a|%u|%n"
 _STAT_FIELDS = 11
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+_ADB_STATES = {"device", "unauthorized", "offline", "recovery", "sideload", "bootloader", "no"}
+_ADB_STATE_LABELS = {
+    "device": "已授权，可执行 adb shell",
+    "unauthorized": "未授权：请在手机屏幕上允许此电脑的 USB 调试",
+    "offline": "离线：请重新插拔数据线或在手机上重新开启 USB 调试",
+    "no permissions": "无权限：请检查 USB 驱动/数据线/手机 USB 模式",
+    "recovery": "设备处于 recovery 模式",
+    "sideload": "设备处于 sideload 模式",
+    "bootloader": "设备处于 bootloader/fastboot 模式",
+}
+
+
+def parse_adb_devices(output: str) -> list[dict[str, str]]:
+    """Parse 'adb devices -l' output into serial/state/details records."""
+    devices: list[dict[str, str]] = []
+    for raw in (output or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("List of devices") or line.startswith("*"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        serial, state = parts[0], parts[1]
+        details = " ".join(parts[2:])
+        if state == "no" and details.startswith("permissions"):
+            state = "no permissions"
+        elif state not in _ADB_STATES:
+            continue
+        devices.append({"serial": serial, "state": state, "details": details})
+    return devices
 
 
 def _mode_kind(mode: int) -> str:
@@ -102,6 +132,23 @@ class Transport:
     @property
     def privilege(self) -> str:
         return self._privilege
+
+    def ensure_ready(self) -> None:
+        """Validate connection/authorization before any device operation."""
+        return None
+
+    def health_ok(self) -> bool:
+        """Cheap connection check. Transports may override; default assumes OK."""
+        return True
+
+    def device_serial(self) -> str:
+        serial = getattr(self, "serial", "") or ""
+        if serial:
+            return str(serial)
+        try:
+            return str(self.device_info().serial or "")
+        except Exception:  # noqa: BLE001
+            return ""
 
     def configure_privilege(self, mode: str = "auto") -> str:
         raise NotImplementedError
@@ -613,12 +660,87 @@ class AdbTransport(ShellTransport):
         self.adb_path = adb_path
         self.serial = serial
         self._prefix = [adb_path] + (["-s", serial] if serial else [])
+        self._ready = False
+        self.adb_devices: list[dict[str, str]] = []
 
     def _shell_argv(self, command: str) -> list[str]:
         return self._prefix + ["shell", command]
 
     def _exec_out_argv(self, command: str) -> list[str]:
         return self._prefix + ["exec-out", command]
+
+    def _set_serial(self, serial: str) -> None:
+        self.serial = serial
+        self._prefix = [self.adb_path] + (["-s", serial] if serial else [])
+
+    def list_devices(self) -> list[dict[str, str]]:
+        try:
+            result = self._run([self.adb_path, "devices", "-l"], timeout=60)
+        except TransportError as exc:
+            raise TransportError(
+                f"无法运行 adb（{self.adb_path}）。请安装 Android 官方 Platform Tools，"
+                "把 adb.exe 加入 PATH，或用 --adb-path 指定 adb.exe 的完整路径。"
+                f" 详情：{exc}"
+            ) from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[:500]
+            raise TransportError(
+                "无法运行 adb devices。请确认已安装 Android Platform Tools，并把 adb 加入 PATH 或使用 --adb-path 指定 adb.exe。"
+                + (f" 详情：{detail}" if detail else "")
+            )
+        self.adb_devices = parse_adb_devices(result.stdout)
+        return self.adb_devices
+
+    def ensure_ready(self) -> None:
+        """Resolve exactly one authorized USB device or fail with actionable instructions."""
+        if self._ready:
+            return
+        devices = self.list_devices()
+        if not devices:
+            raise TransportError(
+                "未检测到 Android 设备。请：1) 用支持数据传输的 USB 线连接手机；"
+                "2) 手机开发者选项开启 USB 调试；3) 解锁手机并在 RSA 授权弹窗点允许；"
+                "4) 运行 adb devices 确认状态为 device。"
+            )
+        ready = [d for d in devices if d["state"] == "device"]
+        if self.serial:
+            target = next((d for d in devices if d["serial"] == self.serial), None)
+            if target is None:
+                listing = "; ".join(f"{d['serial']}({d['state']})" for d in devices)
+                raise TransportError(f"指定设备 {self.serial} 未连接。当前设备：{listing or '无'}")
+            if target["state"] != "device":
+                label = _ADB_STATE_LABELS.get(target["state"], target["state"])
+                raise TransportError(f"设备 {self.serial} 当前状态为 {target['state']}：{label}")
+            self._ready = True
+            return
+        if not ready:
+            states = "; ".join(f"{d['serial']}({d['state']})" for d in devices)
+            hint = "、".join(sorted({_ADB_STATE_LABELS.get(d["state"], d["state"]) for d in devices}))
+            raise TransportError(f"设备存在但不可用：{states}。{hint}")
+        if len(ready) > 1:
+            listing = "; ".join(d["serial"] for d in ready)
+            raise TransportError(
+                f"检测到多个已授权设备：{listing}。为避免误操作其他设备，必须用 --serial <序列号> 明确指定目标。"
+            )
+        self._set_serial(ready[0]["serial"])
+        self._ready = True
+
+    def device_serial(self) -> str:
+        return self.serial or ""
+
+    def health_ok(self) -> bool:
+        if not self.serial:
+            return False
+        try:
+            result = self._run([self.adb_path, "-s", self.serial, "get-state"], timeout=15)
+        except TransportError:
+            return False
+        return result.returncode == 0 and result.stdout.strip() == "device"
+
+    def device_info(self) -> DeviceInfo:
+        info = super().device_info()
+        info.serial = self.serial or info.serial
+        return info
 
     def try_adb_root(self) -> bool:
         try:

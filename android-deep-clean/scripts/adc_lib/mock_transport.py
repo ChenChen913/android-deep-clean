@@ -147,6 +147,12 @@ class MockTransport(Transport):
         return False
 
     # -- environment ------------------------------------------------------
+    def health_ok(self) -> bool:
+        return bool(self.caps.get("connected", True))
+
+    def device_serial(self) -> str:
+        return str(self._device_data.get("serial", "mock-device"))
+
     def configure_privilege(self, mode: str = "auto") -> str:
         mode = (mode or "auto").lower()
         if mode == "none":

@@ -1,12 +1,175 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-- 报告版本：v1.0（2026-11-06）
+- 报告版本：v1.1（2026-11-06，双通路扩展增量；第 1-10 节为 v1.0 基线，仍有效）
 - 验证人：verifier（独立验证工程师，Team 成员）
-- 被测对象：android-deep-clean Skill（Python CLI，版本 1.0.0，mock 传输）
+- 被测对象：android-deep-clean Skill（Python CLI，版本 1.0.0，mock 传输 + 伪 ADB 命令行）
 - 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
-- 任务：共享任务 task-3
+- 任务：共享任务 task-3（v1.0 基线）、task-4（v1.1 双通路扩展）
 
-## 1. 结论（摘要）
+## v1.1 增量验证：双通路扩展（电脑端 ADB / PC 功能，task-4）
+
+> 本节为 v1.1 增量结果；第 1-10 节为 v1.0 基线（当时 114 passed / 2 skipped），其结论与覆盖仍然有效，且本轮全量重跑确认旧用例全部通过。
+
+### v1.1-1. 结论摘要
+
+| 指标 | 结果 |
+|---|---|
+| 收集用例 | 180（v1.0 基线 116 + 本轮新增 64） |
+| 通过 | 178 |
+| 失败 | 0 |
+| 跳过 | 2（与 v1.0 相同的符号链接环境限制用例） |
+| 耗时 | 约 53 秒（多次运行 52.9-56.1s，单进程、无真实 adb、无网络） |
+| 测试命令 | python -m pytest tests -q |
+| 新增产品缺陷 | 1 项（#9，低）——已由 Lead 修复并用新增用例回归验证 |
+| 最终判定 | 通过。双通路扩展功能（设备发现/身份绑定/断开保护、PC 备份、CSV 导出、PC 端哈希、扫描历史）按契约工作；v1.0 的 114 条旧用例零回归 |
+
+### v1.1-2. 环境
+
+| 项目 | 值 |
+|---|---|
+| 操作系统 | Windows-11-10.0.26300-SP0 |
+| Python / pytest | 3.13.3 / 9.0.2 |
+| 真实 adb | 未安装（NOT FOUND）；ADB 相关测试用临时目录中的伪 adb.cmd + 直接注入 AdbTransport._run 的 fake 完成，不依赖真机 |
+| 传输层 | mock（主流程）+ 伪 adb 命令行（devices/doctor 失败路径） |
+| 产品版本 | android-deep-clean 1.1.0 |
+| 报告时间 | 2026-11-06 12:55 +08:00 |
+
+复现：
+
+~~~text
+python -m pytest tests -q
+# 需要查看跳过原因时：
+python -m pytest tests -q -rs
+~~~
+
+被测产品代码指纹（SHA-256 前 16 位，2026-11-06 12:55 快照，含缺陷 #9 修复）：
+
+| 文件 | 指纹 |
+|---|---|
+| scripts/adc.py | F18A1254E07E0447 |
+| scripts/adc_lib/analyzer.py | 9DCAC19FE46F3F07 |
+| scripts/adc_lib/cli.py | 99CC0A5F44225046 |
+| scripts/adc_lib/config.py | 4EEAE9C77C552217 |
+| scripts/adc_lib/device.py | 53B962B81F8C64CC |
+| scripts/adc_lib/executor.py | CE9A7B081A089C91 |
+| scripts/adc_lib/exporter.py | EC615417ECC42A46 |
+| scripts/adc_lib/mock_transport.py | 414DF9693DFEDF45 |
+| scripts/adc_lib/models.py | D284A6CB59B64545 |
+| scripts/adc_lib/planner.py | 8BEF99AED1B98AFC |
+| scripts/adc_lib/reports.py | 877B9EF73650EBA4 |
+| scripts/adc_lib/rules.py | 8D2FC43225893F2E |
+| scripts/adc_lib/scanner.py | 40A27661E1F6A12F |
+| scripts/adc_lib/state.py | 9B6B5FB17495CA4A |
+| scripts/adc_lib/transport.py | 90C3C2A665564E2A |
+| scripts/adc_lib/util.py | 332D55F708C5FB28 |
+| scripts/adc_lib/__init__.py | F12DD2BFBD55AE4F |
+
+### v1.1-3. 真实测试输出
+
+~~~text
+................................................................ss...... [ 40%]
+........................................................................ [ 80%]
+....................................                                     [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests/test_execute.py:388: 当前环境无法创建符号链接（Windows 需要开发者模式/管理员）:
+           [WinError 1314] 客户端没有所需的特权
+SKIPPED [1] tests/test_execute.py:434: 目录联接未被扫描/分类为缓存目录（平台差异）
+178 passed, 2 skipped in 52.94s
+~~~
+
+分文件用例数（合计 180）：
+
+| 测试文件 | 用例数 | v1.0 | v1.1 新增 | 关注点 |
+|---|---:|---:|---:|---|
+| tests/test_unit_util.py | 24 | 24 | 0 | 通用工具/config |
+| tests/test_unit_guard.py | 17 | 17 | 0 | guard_path 安全策略 |
+| tests/test_unit_planner.py | 9 | 9 | 0 | plan/selection 哈希基础 |
+| tests/test_doctor.py | 3 | 3 | 0 | 设备/能力识别 |
+| tests/test_scan.py | 5 | 5 | 0 | 扫描准确性/只读 |
+| tests/test_analyze_categories.py | 13 | 13 | 0 | 分类识别 |
+| tests/test_plan_select.py | 14 | 14 | 0 | 复核/风险/篡改 |
+| tests/test_execute.py | 23 | 23 | 0 | 隔离/删除/恢复/purge/verify |
+| tests/test_cli_contract.py | 8 | 8 | 0 | 退出码/前置依赖 |
+| tests/test_unit_adb.py | 30 | 0 | 30 | ADB 设备解析/就绪/健康/CLI devices/doctor rc4 |
+| tests/test_unit_identity.py | 8 | 0 | 8 | device_identity 稳定性 + 哈希覆盖 |
+| tests/test_dual_path.py | 17 | 0 | 17 | 身份绑定、备份、导出、PC 哈希、扫描历史 |
+| tests/test_device_guard_unit.py | 9 | 0 | 9 | 备份失败安全、运行中断开中止 |
+| 合计 | 180 | 116 | 64 | |
+
+### v1.1-4. 新增覆盖矩阵（task-4 需求 → 测试）
+
+| 需求 | 对应测试 | 结果 |
+|---|---|---|
+| parse_adb_devices：device/unauthorized/offline/no permissions/多设备/空 | test_unit_adb.py::test_parse_adb_devices_*（8 条） | 通过 |
+| ensure_ready：无设备/未授权/离线/无权限/多设备必须 --serial/指定 serial 存在/缺失/状态错 | test_unit_adb.py::test_ensure_ready_*（8 条） | 通过 |
+| list_devices 失败、缺 adb 二进制的可操作报错 | test_unit_adb.py::test_list_devices_*（2 条） | 通过 |
+| health_ok（serial/device/offline/异常）与 device_info serial | test_unit_adb.py::test_health_ok_requires_serial_and_get_state_device、test_device_serial_and_device_info_serial | 通过 |
+| devices 命令 JSON/文本输出、adb 失败 rc4 | test_unit_adb.py::test_devices_command_*（3 条） | 通过 |
+| doctor --transport adb：无设备/未授权/缺 adb 均 rc4 | test_unit_adb.py::test_doctor_with_adb_*（3 条） | 通过 |
+| device_identity 稳定性；序列号/材料变化才改变 id | test_unit_identity.py（4 条） | 通过 |
+| plan_hash/selection_hash 覆盖 device_identity（篡改 id 哈希变，不同设备哈希不同） | test_unit_identity.py（4 条） | 通过 |
+| 身份贯穿 doctor/scan/analyze/plan/selection/execution | test_dual_path.py::test_device_identity_propagates_through_all_artifacts | 通过 |
+| 设备 A scan/plan/select 后换成设备 B：execute rc=3 且 fixture 不变 | test_dual_path.py::test_device_switch_after_plan_is_rejected | 通过 |
+| caps connected=false：execute 拒绝且无 execution.json | test_dual_path.py::test_disconnected_device_blocks_execute | 通过 |
+| 篡改 plan/selection 的 device_identity：拒绝 | test_dual_path.py::test_tampered_device_identity_in_plan_is_rejected | 通过 |
+| --backup-to：备份内容/SHA-256/execution 统计/backup-manifest.json/journal | test_dual_path.py::test_backup_to_copies_and_verifies_before_quarantine | 通过 |
+| --backup-to + 永久删除模式 | test_dual_path.py::test_backup_to_supports_permanent_delete_mode | 通过 |
+| 备份目录不可用：rc=3、不清理、fixture 不变 | test_dual_path.py::test_backup_to_unusable_target_fails_without_cleaning | 通过 |
+| 备份失败跳过清理、源文件保留（pull 异常/size 不符/SHA 不符/单文件失败隔离） | test_device_guard_unit.py（4 条） | 通过 |
+| 备份成功后清理被拒绝：手机源与电脑副本并存 | test_dual_path.py::test_backup_succeeds_but_denied_cleanup_keeps_both_copies | 通过 |
+| /data 内部缓存备份（data 命名空间）与内部隔离区 | test_dual_path.py::test_internal_app_cache_backup_and_quarantine | 通过 |
+| export：analysis-items.csv / analysis-files.csv / execution-items.csv 行数一致 | test_dual_path.py::test_export_csv_rows_match_analysis | 通过 |
+| export 无 analysis rc5、默认输出目录 | test_dual_path.py::test_export_requires_analysis、test_export_default_output_dir | 通过 |
+| --hash-mode pc 识别重复、同大小不同内容不误判、hash-tmp 清理 | test_dual_path.py::test_hash_mode_pc_detects_duplicates_without_device_hash_tools | 通过 |
+| hash_mode 可由 config.scan.hash_mode 默认设置 | test_dual_path.py::test_hash_mode_default_can_come_from_config | 通过 |
+| scan 归档上一轮 + history 列出 current/archived + 空状态 + 三次扫描 | test_dual_path.py::test_scan_archives_previous_round_and_history_lists_it、test_history_command_without_scans | 通过 |
+| 历史快照保留各自设备身份（设备切换后） | test_dual_path.py::test_scan_history_records_each_device_identity | 通过 |
+| 运行中断开：剩余项 aborted、报告写入、已处理项生效 | test_device_guard_unit.py::test_mid_run_disconnect_aborts_remaining_items | 通过 |
+| 文件移动中断开：全部 aborted、源文件保留 | test_device_guard_unit.py::test_device_lost_during_move_aborts_and_keeps_files | 通过 |
+| v1.0 全部用例零回归 | tests/ 其余 116 条 | 通过 |
+
+### v1.1-5. 正向用例（摘要）
+
+1. devices/doctor：伪 adb.cmd 输出 device/unauthorized 两类状态；devices --json 返回 {adb_path, devices[{serial,state,details}]}；devices 文本输出；adb 失败 rc4；doctor --transport adb 在无设备/未授权/缺 adb 时 rc4 且提示可操作。
+2. 身份绑定：doctor/scan/analyze/plan/selection 的 device_identity.id 完全一致（serial/model/sdk/fingerprint 材料派生），plan_hash/selection_hash 可复算且覆盖身份；execution 记录当前设备身份。
+3. PC 备份：--backup-to 在隔离前把文件复制到 <backup>/<execution_id>/sdcard/...，逐文件校验 size + SHA-256，execution.backup_files/backup_bytes、summary、backup-manifest.json、journal 中的 backup_path/backup_sha256 全部一致；delete 模式同样备份后再永久删除；/data 内部缓存备份使用 data 命名空间。
+4. CSV 导出：analysis-items.csv 行数 = analysis.items；analysis-files.csv 行数 = analysis.db candidate_files；执行后追加 execution-items.csv 行数 = execution.items；UTF-8-BOM 便于 Excel。
+5. PC 端哈希：设备无 sha256sum/md5sum 时 analyze 明确提示可改用 --hash-mode pc；--hash-mode pc 通过 USB 拉取候选到电脑算 SHA-256，正确识别真重复，同大小不同内容不误判，临时 hash-tmp 清理干净；config.scan.hash_mode 可作默认。
+6. 扫描历史：第二次 scan 自动把上一轮归档到 <state>/history/scan-*（含 snapshot.db/snapshot-meta.json/scan-summary.md），history 命令列出 current + archived 及各自设备身份；设备切换后两轮历史分别保留 A/B 身份。
+
+### v1.1-6. 反向 / 安全用例（摘要）
+
+1. 设备身份：设备由 A 换成 B（serial/fingerprint/model 变化）后 execute rc=3，错误信息说明设备不一致，不写 execution.json，fixture 完全不变；恢复原设备后同一 token 可继续执行。
+2. 断开保护：caps connected=false 时 execute rc=3（不产生执行记录）；运行中 health_ok 变 false 时剩余项目标记 aborted 并写入 execution/report，已处理项生效；文件移动中断开时全部 aborted、源文件保留。
+3. 篡改：plan.json 或 selection.json 的 device_identity.id 被改 → 对应哈希不一致，rc=3，文件不动。
+4. 备份安全：pull 抛异常 → 跳过清理、源文件保留、不残留半成品（#9 修复后）；size 不符 / SHA 不符 → 删除电脑端半成品并跳过清理；单文件失败不影响同组其它文件；备份目录不可用 → rc=3、零清理；备份成功但清理被 denied_ops 拒绝 → 手机源与电脑副本并存、exit 6。
+5. 导出只读：export 只读取 state/analysis.db，要求先 analyze（否则 rc=5）。
+
+### v1.1-7. v1.1 新增产品缺陷与修复状态
+
+| # | 严重度 | 问题 | 发现测试 | 修复状态 |
+|---|---|---|---|---|
+| 9 | 低 | --backup-to 传输中途异常（USB 断开/设备错误）时，电脑端备份目录残留未校验的半成品文件；源文件保留逻辑正确 | tests/test_device_guard_unit.py::test_backup_partial_copy_is_cleaned_up | 已修复（_backup_file 把 transport.pull 包在 try/except，异常先删除 dest 再抛出），回归通过 |
+
+v1.0 基线中的 8 项缺陷（#1-#8）状态不变，全部已修复且在本轮 178 条全量运行中零回归。
+
+### v1.1-8. v1.1 未覆盖 / 需真机验证项
+
+| 项目 | 原因 / 现状 | 建议 |
+|---|---|---|
+| 真实 USB/无线 ADB 设备枚举与授权流程 | 本机无 adb/真机；用伪 adb.cmd 与注入 _run 覆盖解析与错误分支，未验证真实 adb server/USB 枚举 | 真机执行 devices/doctor，覆盖 unauth 弹窗、离线、多设备 --serial |
+| 真实设备断开（拔线/关 USB 调试） | 用 wrapper 模拟 health_ok/move 失败；真实 adb 的 get-state 延迟、half-open 连接未验证 | 真机执行中拔线演练，核对 aborted 报告与 journal |
+| 真实多设备环境 | ensure_ready 多设备逻辑单测通过；真实两台手机同时连接未验证 | 双机冒烟 |
+| PC 备份真实吞吐/中断恢复 | mock pull 为本地复制；USB 真实带宽、断电/拔线留下半成品后的恢复策略（#9 只保证清理）未压测 | 真机大文件备份 + 中途拔线 |
+| --hash-mode pc 真实 USB 拉取性能 | mock 本地复制；大文件/大量候选的 USB 吞吐与 max_hash_files 预算未实测 | 真机重复照片场景 |
+| scan history 保留上限（10 份） | 只验证了 2-3 轮归档；连续 11+ 轮的淘汰逻辑未跑 | 可补快速循环用例或真机多轮 |
+| 伪 adb.cmd 依赖 cmd.exe | 仅 Windows 有效（测试内自动 skip 非 Windows）；Linux/macOS 需改用 shell 脚本桩 | CI 跨平台时补 shell 桩 |
+| CSV 在 Excel 中的实际打开效果 | 只断言 utf-8-sig 与行数；公式注入/超长字段未验证 | 人工打开抽查 |
+| 备份文件的权限/隐私 | 电脑端备份为明文副本；未验证权限继承与用户提示 | 产品文档提示备份目录安全 |
+
+> v1.1 全部数字来自 2026-11-06 12:55 的实际 pytest 输出；新增 64 条用例均以 mock/伪 adb 确定性运行，未依赖 .tmp-smoke、真机或网络。
+
+## 1. v1.0 基线结论（摘要）
 
 | 指标 | 结果 |
 |---|---|
@@ -30,7 +193,7 @@
 | adb | 未安装（NOT FOUND）——测试不依赖 adb |
 | 网络 | 不需要；全部为本地临时目录 fixture |
 | 传输层 | mock（--transport mock） |
-| 产品版本 | android-deep-clean 1.0.0 |
+| 产品版本 | android-deep-clean 1.1.0 |
 | 工作区 | C:\Users\11853\Desktop\安卓清理 |
 | 报告生成时间 | 2026-11-06 12:03 +08:00 |
 

@@ -1,6 +1,6 @@
 ---
 name: android-deep-clean
-description: 面向 Android 手机的 AI 深度垃圾清理 Skill。通过 ADB / Shizuku / Root / Termux 只读扫描手机存储，生成带证据的文件分类与风险报告，由 AI 逐项复核后让用户选择，最后以隔离优先的方式安全清理，并验证结果。用于用户提出“手机空间不足/清理手机垃圾/深度清理安卓/清理微信 QQ 缓存/找卸载残留/找多年以前的 APK/找重复照片视频/清理浏览器和短视频缓存/看看手机存储被什么占了/清理后复查”等需求。Use for Android storage cleanup, deep junk analysis, uninstalled-app residue, old APKs, duplicate media, WeChat/QQ/browser caches, and post-clean verification. This skill never deletes without explicit user confirmation and a valid selection token.
+description: 面向 Android 手机的 AI 深度垃圾清理 Skill，支持电脑端 USB+ADB 与手机端 Termux/Shizuku 双通路，两条通路共享同一套分类、风险与安全规则。通过 ADB / Shizuku / Root / Termux 只读扫描手机存储，生成带证据的文件分类与风险报告，由 AI 逐项复核后让用户选择，最后以隔离优先的方式安全清理，并验证结果。用于用户提出“手机空间不足/清理手机垃圾/深度清理安卓/清理微信 QQ 缓存/找卸载残留/找多年以前的 APK/找重复照片视频/清理浏览器和短视频缓存/看看手机存储被什么占了/清理后复查”等需求。Use for Android storage cleanup, deep junk analysis, uninstalled-app residue, old APKs, duplicate media, WeChat/QQ/browser caches, and post-clean verification. This skill never deletes without explicit user confirmation and a valid selection token.
 ---
 
 # Android Deep Clean
@@ -26,10 +26,24 @@ description: 面向 Android 手机的 AI 深度垃圾清理 Skill。通过 ADB /
 - 禁止清空整个用户目录；只处理候选清单中的具体路径。
 - 执行前必须让 CLI 重新 stat 校验大小/mtime/inode；文件有变化就跳过并报告，不得“强行清理”。
 - 清理后必须 verify 并向用户报告成功、失败、实际释放、隔离区占用和剩余问题。
+- 电脑端多设备必须 --serial；执行前必须确认当前设备身份与计划一致，不一致立即停止。
+- 电脑端设备断开/离线时立即停止后续破坏性操作并标记 aborted；不得重试强删。
+- 使用 --backup-to 时，备份或校验失败必须跳过该文件清理，源文件保留。
+
+## 两条通路（同一套清理系统）
+
+本 Skill 支持两种调用环境，底层 Transport 不同，但共用同一套代码、分类规则、SAFE/CAUTION/DANGEROUS 分级、保护清单、确认令牌、执行器与验证器：
+
+| 通路 | 使用场景 | 设备连接 | 推荐参数 |
+|---|---|---|---|
+| A 手机端 Agent | 没有电脑；Termux 或手机内 Agent | 本机 shell / Shizuku rish | --transport local 或 --transport rish |
+| B 电脑端 Agent | Windows 11 + USB 数据线；需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
+
+电脑端并不是另一套清理系统：它只替换 Transport。详细步骤见 references/usb-adb-workflow.md；架构与能力边界见 references/dual-path-architecture.md。电脑端每次执行都必须绑定设备身份，禁止把 A 手机的计划用于 B 手机。
 
 ## 环境与安装
 
-运行环境：Windows / macOS / Linux 上的 AI Agent（通过 ADB 控制手机），或 Android 本机 Termux（--transport local）。需要 Python 3.9+，只用标准库。
+运行环境：Windows / macOS / Linux 上的 AI Agent（通过 USB + ADB 控制手机），或 Android 本机 Termux / Shizuku（--transport local|rish）。需要 Python 3.9+，只用标准库；电脑端只需 Android 官方 Platform Tools（含 adb.exe），不需要 Android Studio。
 
 安装到当前 Agent Skills 目录（DeepSeek Harness / 兼容 Agent Skills 的平台）：
 
@@ -48,10 +62,11 @@ Test-Path "$env:USERPROFILE\.agents\skills\android-deep-clean\SKILL.md"
 ~~~powershell
 $Skill = "$env:USERPROFILE\.agents\skills\android-deep-clean"
 $State = ".adc-state"
-python "$Skill\scripts\adc.py" doctor --state $State --transport adb
+python "$Skill\scripts\adc.py" devices --adb-path adb
+python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial <序列号>
 ~~~
 
-注意：**通用参数必须写在子命令之后**（例如 doctor --state ...，不能把 --state 放在 doctor 前面）。
+注意：电脑端多设备时**必须**用 --serial 明确目标；只有一个已授权设备时可省略。**通用参数必须写在子命令之后**（例如 doctor --state ...，不能把 --state 放在 doctor 前面）。
 
 ## 权限分级（只使用真实探测结果）
 
@@ -82,7 +97,7 @@ python "$Skill\scripts\adc.py" doctor --state $State --transport adb
 ### 2. Scan：只读扫描
 
 ~~~powershell
-python "$Skill\scripts\adc.py" scan --state $State --transport adb
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序列号>
 ~~~
 
 默认扫描 /sdcard；Root 下会自动追加 /data/data/*/cache。可选参数：--roots、--max-depth、--max-files、--no-internal。大数据量时可接受截断，但必须在报告里说明。
@@ -90,7 +105,8 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb
 ### 3. Analyze：候选 + 证据 + 报告
 
 ~~~powershell
-python "$Skill\scripts\adc.py" analyze --state $State --transport adb
+# 默认在手机上计算重复文件哈希；也可用电脑本地哈希（只拉取大小相同的重复候选）
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号> --hash-mode pc
 ~~~
 
 生成：
@@ -120,7 +136,10 @@ select 只生成清单和令牌，不执行。必须把清单（路径、数量�
 ### 6. Execute：用户确认后执行
 
 ~~~powershell
-python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <确认令牌>
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <确认令牌>
+
+# 可选：清理前把选中文件备份到电脑（校验大小/SHA-256，失败则不清理该文件）
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <确认令牌> --backup-to D:\phone-backup
 ~~~
 
 默认 quarantine：把文件移动到设备隔离区，保留恢复能力。只有用户明确要求永久删除、且选择的全是 SAFE 时，才使用下面的永久删除流程；**selection 必须也用 select --mode delete 生成**：
@@ -137,7 +156,11 @@ python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <�
 ### 7. Verify 与报告
 
 ~~~powershell
-python "$Skill\scripts\adc.py" verify --state $State --transport adb
+python "$Skill\scripts\adc.py" verify --state $State --transport adb --serial <序列号>
+# 导出 CSV（候选/文件/执行结果）
+python "$Skill\scripts\adc.py" export --state $State --out D:\phone-report
+# 查看历史扫描快照
+python "$Skill\scripts\adc.py" history --state $State
 ~~~
 
 向用户报告：成功/失败、逻辑处理大小、**实际已释放**（隔离模式为 0，purge 后才有）、隔离区位置与占用、剩余问题。然后询问是否：
@@ -242,17 +265,20 @@ Doctor → Scan → Analyze → AI 逐项复核（residue / app_cache / chat_cac
 
 | 目的 | 命令 |
 |---|---|
-| 体检 | adc.py doctor --state .adc-state |
+| 电脑端列设备 | adc.py devices --adb-path adb |
+| 体检 | adc.py doctor --state .adc-state --transport adb --serial <序列号> |
 | 扫描 | adc.py scan --state .adc-state |
-| 分析 | adc.py analyze --state .adc-state |
+| 分析 | adc.py analyze --state .adc-state --hash-mode pc |
 | 复核单个候选 | adc.py inspect --state .adc-state --id <ID> [--pull 3] [--tree] |
 | 生成计划 | adc.py plan --state .adc-state --review review.json |
 | 生成选择/令牌 | adc.py select --state .adc-state --categories app_cache |
-| 执行（隔离） | adc.py execute --state .adc-state --token <TOKEN> |
+| 执行（隔离/备份） | adc.py execute --state .adc-state --token <TOKEN> --backup-to D:\phone-backup |
 | 验证 | adc.py verify --state .adc-state |
 | 恢复 | adc.py restore --state .adc-state --all |
 | 释放隔离区 | adc.py quarantine purge --state .adc-state --token <PURGE_TOKEN> |
 | 复查 | adc.py recheck --state .adc-state |
+| 历史快照 | adc.py history --state .adc-state |
+| CSV 导出 | adc.py export --state .adc-state --out D:\phone-report |
 
 统一加 --transport adb|rish|local|mock；Windows 上连接手机通常用 adb。无手机时用 --transport mock 做模拟测试。
 
@@ -302,3 +328,5 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 - references/report-format.md：报告字段与 JSON 结构。
 - references/installation.md：各平台安装、ADB/Shizuku 配置、Windows 开发。
 - references/troubleshooting.md：常见错误与降级路径。
+- references/usb-adb-workflow.md：Windows 11 + USB + ADB 电脑端完整工作流。
+- references/dual-path-architecture.md：手机端/电脑端双通路共享规则与能力矩阵。

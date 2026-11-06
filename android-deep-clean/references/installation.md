@@ -108,3 +108,27 @@ Compress-Archive -Path android-deep-clean -DestinationPath android-deep-clean.zi
 - verify 能识别源文件/隔离文件状态；
 - 报告 UTF-8 中文正常；
 - 没有硬编码本机路径。
+
+## 10. v1.1 双通路速查
+
+电脑端（Windows 11 + USB）：
+
+~~~powershell
+python "$Skill\scripts\adc.py" devices --adb-path adb
+python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial <序列号>
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序列号>
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号> --hash-mode pc
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <TOKEN> --backup-to D:\phone-backup
+python "$Skill\scripts\adc.py" export --state $State --out D:\phone-report
+python "$Skill\scripts\adc.py" history --state $State
+~~~
+
+手机端（Termux / Shizuku）：
+
+~~~powershell
+python scripts/adc.py doctor --state .adc-state --transport local
+python scripts/adc.py scan --state .adc-state --transport local
+python scripts/adc.py analyze --state .adc-state --transport local
+~~~
+
+两条通路共用同一套规则、风险分级和确认令牌；详细见 usb-adb-workflow.md 与 dual-path-architecture.md。

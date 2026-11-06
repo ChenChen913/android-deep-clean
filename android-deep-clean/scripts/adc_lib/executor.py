@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .device import device_identity
 from .reports import execution_markdown, verification_markdown
 from .rules import guard_path
 from .scanner import load_packages
@@ -39,7 +40,12 @@ from .util import (
     normalize_device_path,
     random_token,
     read_json,
+    sha256_file,
 )
+
+
+class DeviceLostError(TransportError):
+    """Raised when the USB/ADB device disappears mid-execution."""
 
 
 def _recompute_plan_hash(plan: dict[str, Any]) -> str:
@@ -51,7 +57,7 @@ def _recompute_selection_hash(selection: dict[str, Any]) -> str:
 
 
 class Executor:
-    def __init__(self, transport: Transport, config: dict[str, Any], state: State) -> None:
+    def __init__(self, transport: Transport, config: dict[str, Any], state: State, *, backup_dir: str | None = None) -> None:
         self.transport = transport
         self.config = config
         self.state = state
@@ -61,6 +67,10 @@ class Executor:
         self.journal_path = self.exec_dir / "journal.jsonl"
         self.quarantine_roots: set[str] = set()
         self.failures: list[dict[str, str]] = []
+        self.backup_dir = Path(backup_dir).expanduser().resolve() if backup_dir else None
+        self.backup_root = self.backup_dir / self.execution_id if self.backup_dir else None
+        self.backup_manifest: list[dict[str, Any]] = []
+        self.backup_bytes = 0
 
     def _load_packages(self):
         scan_path = self.state.require("scan", "扫描结果")
@@ -97,6 +107,23 @@ class Executor:
             raise SafetyError(f"执行模式 {mode} 与 selection.mode={selection.get('mode')} 不一致")
         if mode == "delete" and not allow_permanent:
             raise SafetyError("永久删除需要显式 --allow-permanent-delete；默认请使用隔离模式")
+        expected_device = plan.get("device_identity") or selection.get("device_identity") or {}
+        expected_id = str((expected_device or {}).get("id") or "")
+        if not expected_id:
+            raise SafetyError("计划缺少设备身份，拒绝执行。请重新运行 doctor/scan/analyze/plan。")
+        current_device = device_identity(self.transport.device_info())
+        if current_device.get("id") != expected_id:
+            raise SafetyError(
+                "当前连接的设备与计划设备不一致，拒绝执行。"
+                f" 计划：{expected_device.get('serial') or expected_id}；"
+                f" 当前：{current_device.get('serial') or current_device.get('id')}。"
+                "请确认 USB 连接的是同一台手机，重新扫描并生成计划。"
+            )
+        sel_device_id = str(((selection.get("device_identity") or {}).get("id")) or "")
+        if sel_device_id and sel_device_id != expected_id:
+            raise SafetyError("selection 的设备身份与 plan 不一致，拒绝执行")
+        if not self.transport.health_ok():
+            raise SafetyError("设备当前不可用/已断开，未执行任何操作。")
         plan_items = {item["id"]: item for item in plan.get("items") or []}
         selected_ids = [item["id"] for item in selection.get("items") or []]
         if not selected_ids:
@@ -126,9 +153,20 @@ class Executor:
     # ------------------------------------------------------------- execution
     def run(self, plan: dict[str, Any], selection: dict[str, Any], token: str, mode: str, allow_permanent: bool) -> dict[str, Any]:
         conn, manifests = self._preflight(plan, selection, token, mode, allow_permanent)
+        current_identity = device_identity(self.transport.device_info())
+        expected_identity_id = str((plan.get("device_identity") or {}).get("id") or "")
+        if expected_identity_id and current_identity.get("id") != expected_identity_id:
+            conn.close()
+            raise SafetyError("执行前设备身份再次校验失败，拒绝执行")
         started_at = now_iso()
         free_before = self._safe_df()
         self.journal_path.write_text("", encoding="utf-8")
+        if self.backup_root is not None:
+            try:
+                self.backup_root.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                conn.close()
+                raise SafetyError(f"无法创建电脑备份目录 {self.backup_root}：{exc}") from exc
         quarantine_root = ""
         if mode == "quarantine":
             quarantine_root = self._quarantine_root()
@@ -145,12 +183,36 @@ class Executor:
         quarantine_files = 0
         quarantine_bytes = 0
         processed_dirs = 0
-        for selection_item in selection.get("items") or []:
+        abort_reason = ""
+        selected_items = list(selection.get("items") or [])
+        for index, selection_item in enumerate(selected_items):
             item_id = selection_item["id"]
             plan_item = next((item for item in plan.get("items") or [] if item.get("id") == item_id), None)
             if not plan_item:
                 continue
-            result = self._execute_item(conn, plan_item, manifests.get(item_id) or [], mode, quarantine_root)
+            if not self.transport.health_ok():
+                abort_reason = "设备连接已断开，后续项目已停止执行"
+                item_results.append(self._aborted_item(plan_item, abort_reason))
+                total_fail += 1
+                for rest in selected_items[index + 1:]:
+                    rest_plan = next((entry for entry in plan.get("items") or [] if entry.get("id") == rest["id"]), None)
+                    if rest_plan:
+                        item_results.append(self._aborted_item(rest_plan, abort_reason))
+                        total_fail += 1
+                break
+            try:
+                result = self._execute_item(conn, plan_item, manifests.get(item_id) or [], mode, quarantine_root)
+            except DeviceLostError as exc:
+                abort_reason = str(exc)
+                item_results.append(self._aborted_item(plan_item, abort_reason))
+                total_fail += 1
+                for rest in selected_items[index + 1:]:
+                    rest_plan = next((entry for entry in plan.get("items") or [] if entry.get("id") == rest["id"]), None)
+                    if rest_plan:
+                        item_results.append(self._aborted_item(rest_plan, abort_reason))
+                        total_fail += 1
+                self.failures.append({"path": "", "reason": abort_reason, "item": item_id})
+                break
             item_results.append(result)
             total_success += result["success_count"]
             total_fail += result["failed_count"]
@@ -170,14 +232,21 @@ class Executor:
             "selection_id": selection.get("selection_id"),
             "selection_hash": selection.get("selection_hash"),
             "analysis_id": plan.get("analysis_id"),
+            "device_identity": current_identity,
+            "transport": self.transport.name,
             "started_at": started_at,
             "finished_at": finished_at,
             "mode": mode,
-            "status": "completed" if total_fail == 0 else "partial",
+            "status": "aborted" if abort_reason else ("completed" if total_fail == 0 else "partial"),
+            "abort_reason": abort_reason,
             "quarantine_root": str(quarantine_root) if quarantine_root else "",
             "quarantine_roots": sorted(self.quarantine_roots),
             "quarantine_files": quarantine_files,
             "quarantine_bytes": quarantine_bytes,
+            "backup_dir": str(self.backup_dir) if self.backup_dir else "",
+            "backup_root": str(self.backup_root) if self.backup_root else "",
+            "backup_files": len(self.backup_manifest),
+            "backup_bytes": self.backup_bytes,
             "purge_token": purge_token,
             "free_before": free_before,
             "free_after": free_after,
@@ -186,12 +255,15 @@ class Executor:
             "summary": {
                 "groups": len(item_results),
                 "failed_groups": sum(1 for item in item_results if item.get("status") == "failed"),
+                "aborted_groups": sum(1 for item in item_results if item.get("status") == "aborted"),
                 "success_files": total_success,
                 "failed_files": total_fail,
                 "processed_bytes": total_bytes,
                 "released_bytes": total_bytes if mode == "delete" else 0,
                 "quarantine_files": quarantine_files,
                 "quarantine_bytes": quarantine_bytes,
+                "backup_files": len(self.backup_manifest),
+                "backup_bytes": self.backup_bytes,
                 "removed_dirs": processed_dirs,
                 "df_delta_bytes": (free_after.get("available_bytes", 0) - free_before.get("available_bytes", 0))
                 if isinstance(free_after, dict) and isinstance(free_before, dict) else 0,
@@ -208,6 +280,12 @@ class Executor:
             ],
         }
         atomic_write_json(self.exec_dir / "execution.json", execution)
+        if self.backup_root is not None:
+            atomic_write_json(self.exec_dir / "backup-manifest.json", {
+                "execution_id": self.execution_id,
+                "backup_root": str(self.backup_root),
+                "files": self.backup_manifest,
+            })
         try:
             (self.exec_dir / "report-after.md").write_text(execution_markdown(execution), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001 - never hide a completed execution report
@@ -287,12 +365,25 @@ class Executor:
                 self.failures.append({"path": path, "reason": reason, "item": item_id})
                 self._journal({"event": "skipped", "path": path, "reason": reason, "item": item_id})
                 continue
+            backup_info: dict[str, Any] = {}
+            if self.backup_root is not None:
+                try:
+                    backup_info = self._backup_file(path, row, item_id)
+                except Exception as exc:  # noqa: BLE001
+                    if not self.transport.health_ok():
+                        raise DeviceLostError(f"设备在备份过程中断开：{exc}") from exc
+                    failed += 1
+                    message = f"备份到电脑失败，已跳过清理：{exc}"
+                    errors.append((message, path))
+                    self.failures.append({"path": path, "reason": message, "item": item_id})
+                    self._journal({"event": "skipped", "path": path, "reason": message, "item": item_id})
+                    continue
             try:
                 if mode == "delete":
                     self.transport.delete_file(path)
                     if self.transport.stat(path) is not None:
                         raise TransportError("删除后文件仍然存在")
-                    self._journal({"event": "deleted", "path": path, "size": int(row.get("size") or 0), "item": item_id})
+                    self._journal({"event": "deleted", "path": path, "size": int(row.get("size") or 0), "item": item_id, **backup_info})
                 else:
                     dest = self._quarantine_target(path, quarantine_root)
                     if self.transport.stat(dest) is not None:
@@ -304,13 +395,15 @@ class Executor:
                         raise TransportError("隔离后校验失败（目标缺失或大小不一致）")
                     self._journal({
                         "event": "quarantined", "path": path, "quarantine_path": dest,
-                        "size": int(row.get("size") or 0), "item": item_id,
+                        "size": int(row.get("size") or 0), "item": item_id, **backup_info,
                     })
                     qfiles += 1
                     qbytes += int(row.get("size") or 0)
                 success += 1
                 processed_bytes += int(row.get("size") or 0)
             except Exception as exc:  # noqa: BLE001
+                if not self.transport.health_ok():
+                    raise DeviceLostError(f"设备在清理过程中断开：{exc}") from exc
                 failed += 1
                 message = str(exc)
                 errors.append((message, path))
@@ -346,6 +439,8 @@ class Executor:
                         processed_bytes += int(row.get("size") or 0)
                     self._journal({"event": "rmdir", "path": path, "item": item_id})
             except Exception as exc:  # noqa: BLE001
+                if not self.transport.health_ok():
+                    raise DeviceLostError(f"设备在清理过程中断开：{exc}") from exc
                 if action == "rmdir":
                     failed += 1
                     message = f"rmdir 失败（目录可能非空/被占用）：{exc}"
@@ -358,6 +453,73 @@ class Executor:
             status = "success"
         return self._item_result(item_id, category, status, success, failed, processed_bytes, errors=errors,
                                  quarantine_files=qfiles, quarantine_bytes=qbytes, removed_dirs=removed_dirs)
+
+    def _backup_file(self, path: str, row: dict[str, Any], item_id: str) -> dict[str, Any]:
+        """Copy one device file to the PC backup directory and verify it.
+
+        This runs before quarantine/delete.  If backup or verification fails,
+        the caller skips cleanup for that file (source stays on the phone).
+        """
+        if self.backup_root is None:
+            return {}
+        shown = display_path(path)
+        if is_under(shown, "/sdcard"):
+            namespace = "sdcard"
+            rel = shown[len("/sdcard"):].lstrip("/")
+        elif is_under(path, "/data"):
+            namespace = "data"
+            rel = path[len("/data"):].lstrip("/")
+        else:
+            raise SafetyError(f"不支持的备份源路径：{shown}")
+        if not rel or ".." in Path(rel).parts:
+            raise SafetyError(f"备份相对路径非法：{shown}")
+        dest = (self.backup_root / namespace / Path(rel)).resolve()
+        try:
+            dest.relative_to(self.backup_root.resolve())
+        except ValueError as exc:
+            raise SafetyError(f"备份目标逃逸：{dest}") from exc
+        if dest.exists():
+            raise SafetyError(f"电脑备份目标已存在：{dest}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        expected_size = int(row.get("size") or 0)
+        try:
+            written = self.transport.pull(path, str(dest))
+        except Exception:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        if int(written) != expected_size:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            raise SafetyError(f"备份大小不一致：手机 {expected_size}B，电脑 {written}B")
+        local_hash = sha256_file(dest)
+        device_hash: str | None = None
+        try:
+            hashes = self.transport.hash_files([path])
+            device_hash = hashes.get(path)
+        except Exception:  # noqa: BLE001
+            device_hash = None
+        if device_hash and device_hash != local_hash:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            raise SafetyError("备份 SHA-256 与手机端不一致，已删除不完整备份并跳过清理")
+        entry = {
+            "path": path,
+            "backup_path": str(dest),
+            "sha256": local_hash,
+            "size": expected_size,
+            "item": item_id,
+            "verified_by": "sha256" if device_hash else "size",
+        }
+        self.backup_manifest.append(entry)
+        self.backup_bytes += expected_size
+        return {"backup_path": str(dest), "backup_sha256": local_hash, "backup_verified_by": entry["verified_by"]}
 
     def _validate_file(self, path: str, row: dict[str, Any], category: str, target_dir: str) -> str:
         try:
@@ -395,6 +557,20 @@ class Executor:
             return True
         # Mock/local may return an equivalent path with different mount alias.
         return os.path.normpath(real) == os.path.normpath(path)
+
+    def _aborted_item(self, plan_item: dict[str, Any], reason: str) -> dict[str, Any]:
+        return {
+            "id": plan_item.get("id", ""),
+            "category": plan_item.get("category", ""),
+            "status": "aborted",
+            "success_count": 0,
+            "failed_count": 0,
+            "processed_bytes": 0,
+            "quarantine_files": 0,
+            "quarantine_bytes": 0,
+            "removed_dirs": 0,
+            "error": reason,
+        }
 
     def _fail_item(self, item_id: str, category: str, message: str, target: str = "") -> dict[str, Any]:
         """Record an item-level failure that happens before any per-file loop."""

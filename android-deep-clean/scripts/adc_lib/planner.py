@@ -165,12 +165,18 @@ def build_plan(analysis: dict[str, Any], review: dict[str, Any], config: dict[st
         risk_totals[item["risk"]]["groups"] += 1
         risk_totals[item["risk"]]["files"] += item["file_count"]
         risk_totals[item["risk"]]["bytes"] += int(item["total_bytes"])
-    plan_hash = compute_plan_hash({"analysis_id": analysis.get("analysis_id"), "items": items})
+    device_identity = analysis.get("device_identity") or (analysis.get("summary") or {}).get("device_identity") or {}
+    plan_hash = compute_plan_hash({
+        "analysis_id": analysis.get("analysis_id"),
+        "device_identity": device_identity,
+        "items": items,
+    })
     plan = {
         "schema": 1,
         "plan_id": stable_id("plan", analysis.get("analysis_id", ""), plan_hash),
         "plan_hash": plan_hash,
         "analysis_id": analysis.get("analysis_id"),
+        "device_identity": device_identity,
         "analysis_path": analysis_path,
         "analysis_db_path": analysis.get("analysis_db_path"),
         "generated_at": now_iso(),
@@ -289,6 +295,7 @@ def build_selection(plan: dict[str, Any], config: dict[str, Any], args: Any) -> 
         "plan_id": plan.get("plan_id"),
         "plan_hash": plan.get("plan_hash"),
         "analysis_id": plan.get("analysis_id"),
+        "device_identity": plan.get("device_identity") or {},
         "created_at": now_iso(),
         "mode": mode,
         "token": token,

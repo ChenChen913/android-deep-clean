@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import posixpath
+import shutil
 import sqlite3
+from pathlib import Path
 from typing import Any, Iterable
 
 from .models import CandidateFile, PackageIndex
@@ -44,6 +46,7 @@ from .util import (
     human_bytes,
     now_iso,
     parse_age_days,
+    sha256_file,
     sha256_text,
     stable_id,
 )
@@ -111,6 +114,8 @@ class Analyzer:
         scan_conn: sqlite3.Connection,
         scan_meta: dict[str, Any],
         packages: PackageIndex,
+        *,
+        hash_mode: str = "device",
     ) -> None:
         self.transport = transport
         self.config = config
@@ -128,6 +133,7 @@ class Analyzer:
         self.category_counts: dict[str, int] = {}
         self.sample_limit = int(config["report"]["sample_paths"])
         self.max_candidates = int(config["scan"]["max_candidates"])
+        self.hash_mode = hash_mode if hash_mode in {"device", "pc"} else "device"
         scan_db = state.require("scan")
         self.out_dir = state.dir("analysis")
         self.db_path = self.out_dir / "analysis.db"
@@ -580,10 +586,45 @@ class Analyzer:
                 confidence=0.7, keep_suggestion="若最近误删过文件，请先在相册/文件管理器中恢复。",
             )
 
+    def _hash_paths(self, paths: list[str], *, expected_size: int) -> dict[str, str | None]:
+        """Hash duplicate candidates on the device or on the PC.
+
+        PC mode pulls only the size-collision candidates over USB and computes
+        SHA-256 locally; it never asks the phone to hash user files and is
+        useful when the device toybox lacks sha256sum.
+        """
+        if self.hash_mode != "pc":
+            return self.transport.hash_files(paths)
+        tmp = self.out_dir / "hash-tmp"
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True, exist_ok=True)
+        result: dict[str, str | None] = {}
+        try:
+            for index, path in enumerate(paths):
+                temp = tmp / f"{index:04d}-{sha256_text(path)[:12]}.bin"
+                try:
+                    written = self.transport.pull(path, str(temp))
+                    if int(written) != int(expected_size):
+                        result[path] = None
+                        continue
+                    result[path] = sha256_file(temp)
+                except Exception:  # noqa: BLE001
+                    result[path] = None
+                finally:
+                    try:
+                        if temp.exists():
+                            temp.unlink()
+                    except OSError:
+                        pass
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return result
+
     def gen_duplicates(self) -> None:
         caps = self.scan_meta.get("capabilities") or {}
-        if not caps.get("hashing", True):
-            self.limitations.append("设备缺少 hash 工具，跳过重复文件检测。")
+        if self.hash_mode == "device" and not caps.get("hashing", True):
+            self.limitations.append("设备缺少 hash 工具，跳过重复文件检测（可改用 --hash-mode pc）。")
             return
         min_size = int(self.config["thresholds"]["min_duplicate_bytes"])
         max_groups = int(self.config["scan"]["max_duplicate_groups"])
@@ -621,7 +662,7 @@ class Analyzer:
                     paths.append(row["path"])
             if len(paths) < 2:
                 continue
-            hashes = self.transport.hash_files(paths)
+            hashes = self._hash_paths(paths, expected_size=size)
             checked_files += len(paths)
             checked_bytes += size * len(paths)
             groups: dict[str, list[str]] = {}
@@ -947,11 +988,13 @@ class Analyzer:
             "analysis_id": self._analysis_id,
             "generated_at": now_iso(),
             "device": self.scan_meta.get("device") or {},
+            "device_identity": self.scan_meta.get("device_identity") or {},
             "android": self.scan_meta.get("android", ""),
             "stats": self.scan_meta.get("stats") or {},
             "candidate_groups": int(total_row["c"] if total_row else 0),
             "candidate_files": int(total_row["f"] if total_row else 0),
             "candidate_bytes": int(total_row["b"] if total_row else 0),
+            "hash_mode": self.hash_mode,
             "risk_totals": risk_totals,
             "categories": sorted(categories.values(), key=lambda c: (-c["bytes"], c["category"])),
             "limitations": self.limitations,
@@ -1017,6 +1060,8 @@ class Analyzer:
             "scan_meta_path": str(self.state.file("scan", "snapshot-meta.json")),
             "analysis_db_path": str(self.db_path),
             "analysis_hash": self._analysis_hash(),
+            "device_identity": self.scan_meta.get("device_identity") or {},
+            "hash_mode": self.hash_mode,
             "summary": summary,
             "items": items,
             "limitations": self.limitations,

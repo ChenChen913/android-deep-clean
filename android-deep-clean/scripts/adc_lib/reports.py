@@ -142,6 +142,7 @@ def plan_markdown(plan: dict[str, Any]) -> str:
         "",
         f"- Plan ID：{plan.get('plan_id')}",
         f"- 分析 ID：{plan.get('analysis_id')}",
+        f"- 目标设备：{(plan.get('device_identity') or {}).get('serial', '-')} / {(plan.get('device_identity') or {}).get('id', '-')}",
         f"- 生成时间：{plan.get('generated_at')}",
         f"- 计划项：{summary.get('groups', 0)} 组 / {summary.get('files', 0)} 个文件 / {human_bytes(summary.get('bytes', 0))}",
         f"- 可选：{summary.get('selectable_groups', 0)} 组；需复核：{summary.get('review_required', 0)} 组",
@@ -192,6 +193,7 @@ def selection_markdown(selection: dict[str, Any]) -> str:
         "",
         f"- Selection ID：{selection.get('selection_id')}",
         f"- Plan ID：{selection.get('plan_id')}",
+        f"- 目标设备：{(selection.get('device_identity') or {}).get('serial', '-')} / {(selection.get('device_identity') or {}).get('id', '-')}",
         f"- 已选择：{summary.get('groups', 0)} 组 / {summary.get('files', 0)} 个文件 / {human_bytes(summary.get('bytes', 0))}",
         f"- 执行模式：{selection.get('mode', 'quarantine')}",
         f"- **确认令牌：{selection.get('token')}**",
@@ -229,12 +231,17 @@ def execution_markdown(execution: dict[str, Any]) -> str:
         "# 清理执行报告",
         "",
         f"- Execution ID：{execution.get('execution_id')}",
+        f"- 设备：{(execution.get('device_identity') or {}).get('serial', '-')} / {(execution.get('device_identity') or {}).get('id', '-')}",
+        f"- 传输方式：{execution.get('transport', '-')}",
         f"- 时间：{execution.get('started_at')} → {execution.get('finished_at')}",
         f"- 模式：{execution.get('mode')}",
+        f"- 状态：{execution.get('status')}",
         f"- 计划项：{summary.get('groups', 0)}；成功文件：{summary.get('success_files', 0)}；失败文件：{summary.get('failed_files', 0)}",
         f"- 已移动/删除逻辑大小：{human_bytes(summary.get('processed_bytes', 0))}",
         f"- 实际已释放：{human_bytes(summary.get('released_bytes', 0))}（隔离模式需 purge 后才释放）",
         f"- 隔离区：{execution.get('quarantine_root', '-')}",
+        f"- 电脑备份：{execution.get('backup_files', 0)} 个 / {human_bytes(execution.get('backup_bytes', 0))}"
+        + (f"（{execution.get('backup_root')}）" if execution.get("backup_root") else ""),
         f"- Purge 令牌：{execution.get('purge_token', '-')}",
         "",
         "## 结果",
@@ -248,6 +255,8 @@ def execution_markdown(execution: dict[str, Any]) -> str:
             f"{item.get('success_count', 0)}/{item.get('failed_count', 0)} | {human_bytes(item.get('processed_bytes', 0))} | "
             f"{md_escape(item.get('error', ''))} |"
         )
+    if execution.get("abort_reason"):
+        lines += ["", f"> ⚠ 执行中止：{md_escape(execution['abort_reason'])}。未执行的项目保持原状。"]
     failures = execution.get("failures") or []
     if failures:
         lines += ["", "## 失败项目（未删除，仍留在原位置）", ""]

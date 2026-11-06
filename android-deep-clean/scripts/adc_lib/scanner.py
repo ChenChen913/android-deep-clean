@@ -8,6 +8,7 @@ analysis so that planning can be reproduced and audited.
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -133,6 +134,29 @@ class Scanner:
             return []
 
     # -- scanning ---------------------------------------------------------
+    def _archive_previous_scan(self) -> str:
+        scan_dir = self.state.dir("scan")
+        db_path = scan_dir / "snapshot.db"
+        if not db_path.exists():
+            return ""
+        history = self.state.root / "history"
+        history.mkdir(parents=True, exist_ok=True)
+        target = history / ("scan-" + time.strftime("%Y%m%d-%H%M%S"))
+        suffix = 2
+        while target.exists():
+            target = history / ("scan-" + time.strftime("%Y%m%d-%H%M%S") + f"-{suffix}")
+            suffix += 1
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("snapshot.db", "snapshot-meta.json", "scan-summary.md"):
+            source = scan_dir / name
+            if source.exists():
+                shutil.copy2(source, target / name)
+        # Keep a bounded history so repeated scans cannot fill the host disk.
+        archives = sorted(history.glob("scan-*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in archives[10:]:
+            shutil.rmtree(old, ignore_errors=True)
+        return str(target)
+
     def scan(
         self,
         *,
@@ -143,6 +167,7 @@ class Scanner:
         progress: bool = True,
     ) -> dict[str, Any]:
         scan_dir = self.state.dir("scan")
+        previous_scan = self._archive_previous_scan()
         db_path = scan_dir / "snapshot.db"
         for suffix in ("", "-wal", "-shm"):
             path = Path(str(db_path) + suffix)
@@ -235,6 +260,8 @@ class Scanner:
             "transport": self.transport.name,
             "privilege": self.transport.privilege,
             "device": (self.doctor.get("device") or {}),
+            "device_identity": (self.doctor.get("device_identity") or {}),
+            "previous_scan": previous_scan,
             "android": self.doctor.get("android", ""),
             "capabilities": (self.doctor.get("capabilities") or {}),
             "limitations": (self.doctor.get("limitations") or []),
