@@ -59,7 +59,7 @@
 ## 5. 当前结论
 
 - 代码、Mock 与 CI：通过。
-- 真实设备只读链路：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）已通过 doctor、scan、analyze、inspect。
+- 真实设备只读链路：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）已通过 doctor、scan、analyze、inspect；local 与 USB+ADB 两条通路均验证，ADB 全盘扫描 125,855 条目 / 117,007 文件。
 - 真实设备清理/恢复：**0 台完成验收**；未执行 execute、purge、restore。
 - 真实 HarmonyOS NEXT：**0 台完成验收**。
 - 当前准确定位：**只读分析可用于试用；清理与恢复仍未达到正式工具门槛**。

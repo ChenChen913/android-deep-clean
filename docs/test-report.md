@@ -1,20 +1,44 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.5，2026-11-06）
+## 当前版本摘要（v1.2.6，2026-11-06）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `65b1cdf`（v1.2.5） |
-| 本地 Mock | 192 passed / 1 skipped（193 collected） |
-| CI | 运行 `42180263540`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
-| 真实设备只读 | 1 台通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 底座），doctor、scan、analyze、inspect 全部成功 |
+| 验证提交 | v1.2.6 本地工作区（尚未提交） |
+| 本地 Mock | 193 passed / 1 skipped（194 collected） |
+| CI | 未触发（本地改动） |
+| 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
 | 真实设备清理/恢复 | 0 台；未执行 execute、purge、restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
-| 当前定位 | 只读链路已在真实设备验证；**清理与恢复仍未验收，未达到正式清理工具门槛** |
+| 当前定位 | 只读链路已在真实设备双通路验证；**清理与恢复仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.2.6 ADB 真机只读验证与全盘扫描修复（2026-11-06）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），序列号 MGFNW19903000053，Windows 11 + Android Platform Tools，`--transport adb`，shell 权限（无 root）。
+
+| 步骤 | 结果 |
+|---|---|
+| devices | 识别 1 台，state=device，自动提示已完成 RSA 授权 |
+| doctor | platform=harmonyos_compat；serials/sdk/型号/指纹正确；已安装应用 298（系统 243）；`/sdcard` 112.5 GiB / 可用 17.6 GiB |
+| scan（/sdcard/Download） | 237 条目 / 190 文件 / 723.07 MiB |
+| scan（/sdcard 全盘） | 125,855 条目 / 117,007 文件 / 25,093,192,713 字节（23.37 GiB），耗时 47.8 秒，未截断，skipped 为空 |
+| analyze | 59 个候选组 / 74,885 文件 / 5.02 GiB（5,390,767,059 字节）；CAUTION 56 组、SAFE 3 组；类别：缩略图 3、旧截图 18、应用缓存 22、旧下载 6、重复文件 3、临时日志 2、卸载残留 2、聊天缓存 1、空目录 2 |
+| 受保护项 | 3.34 GiB 的 `photoshare.db` 等数据库文件进入 protected_items，未进入候选 |
+| inspect | 成功；文件清单与 analysis.db 一致，未加 `--pull` |
+| 只读核对 | `/sdcard/.android-deep-clean` 不存在；抽样文件 size/mtime/inode 与分析记录完全一致 |
+| 删除/恢复 | 未执行 |
+
+本轮发现并修复的缺陷：
+
+| # | 严重度 | 问题 | 根因 | 修复 |
+|---|---|---|---|---|
+| 10 | 高 | USB+ADB 下 `scan --roots /sdcard` 只返回 1 个条目，全盘扫描结果为空 | `/sdcard` 是指向 `/storage/self/primary` 的符号链接，`find` 默认不跟随命令行起始链接，只打印链接自身 | `find -H`（只跟随起始链接，不跟随遍历中遇到的符号链接）；`listdir` 同步修正；新增回归测试 |
+
+验证：修复前 `entries=1 / files=0`；修复后同一命令 `entries=125855 / files=117007`，`duration_seconds=47.8`。全量测试 193 passed / 1 skipped。
 
 ### v1.2.5 真机只读验证（2026-11-06）
 

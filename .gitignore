@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-.adc-state/
+.adc-state*/
 .tmp-smoke/
 .tmp-ext/
 .adc/

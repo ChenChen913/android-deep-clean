@@ -402,7 +402,9 @@ class ShellTransport(Transport):
             except AdcError:
                 continue
             clauses.append(f"-path {shell_quote(ex)}")
-        find_expr = f"find {shell_quote(root)} -xdev"
+        # -H follows a symlink given on the command line (e.g. /sdcard ->
+        # /storage/self/primary) without following links found during the walk.
+        find_expr = f"find -H {shell_quote(root)} -xdev"
         if max_depth and max_depth > 0:
             find_expr += f" -maxdepth {int(max_depth)}"
         if clauses:
@@ -506,7 +508,7 @@ class ShellTransport(Transport):
         path = normalize_device_path(path)
         # Find the children (depth 1) and stat them.
         rc, out, _ = self.shell_rc(
-            f"find {shell_quote(path)} -mindepth 1 -maxdepth 1 -print0 2>/dev/null | xargs -0 -n 100 stat -c {shell_quote(STAT_FORMAT)} 2>/dev/null",
+            f"find -H {shell_quote(path)} -mindepth 1 -maxdepth 1 -print0 2>/dev/null | xargs -0 -n 100 stat -c {shell_quote(STAT_FORMAT)} 2>/dev/null",
             timeout=120,
         )
         entries: list[Entry] = []

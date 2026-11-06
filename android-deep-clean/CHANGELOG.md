@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.6 — 修复 ADB 全盘扫描只返回根条目
+
+### Fixed
+- 修复 USB+ADB 下扫描 `/sdcard` 只得到 1 个条目：Android 的 `/sdcard` 是指向 `/storage/self/primary` 的符号链接，`find` 默认不跟随命令行起始链接。改为 `find -H`（只跟随起始链接，不跟随遍历中遇到的链接），`listdir` 同步修正。新增回归测试。
+- 真机 ADB 只读验证通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），全盘 125,855 条目 / 117,007 文件 / 23.37 GiB 扫描 47.8 秒，59 个候选组；未执行任何清理动作。
+
 ## v1.2.5 — 真实设备只读验证与时间戳异常提示
 
 ### Added

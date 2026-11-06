@@ -51,6 +51,13 @@ def test_find_script_keeps_spaces_around_exclude_group():
     assert "(-path" not in script
 
 
+def test_find_script_follows_root_symlink_but_not_tree_links():
+    # /sdcard is a symlink on Android; without -H find prints only the link.
+    script = ShellTransport()._find_script("/sdcard", max_depth=0, excludes=[])
+    assert script.startswith("find -H '/sdcard' ")
+    assert "-L" not in script
+
+
 def test_local_proot_is_not_treated_as_android_root(monkeypatch):
     transport = LocalTransport()
     monkeypatch.setattr(transport, "_is_root_id", lambda: True)
