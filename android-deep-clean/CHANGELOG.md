@@ -5,6 +5,7 @@
 ### Fixed
 - mock 传输的 `_to_device()` 不再用 `Path.resolve()` 跟随符号链接，避免链接项被登记成目标文件并覆盖真实条目；Linux 上扫描包含符号链接的目录时不再丢失候选。
 - GitHub Actions 的 Ubuntu 作业改用 `ubuntu-22.04`，避免 `ubuntu-latest` 升级到 Ubuntu 26.04 后没有 Python 3.9 可用。
+- 修正符号链接测试夹具：链接在 analyze/plan 之后创建，避免真实目标文件本身成为候选、被正常隔离后导致「目标应保留」断言失败。
 
 ### Changed
 - 版本号升级到 1.2.2。

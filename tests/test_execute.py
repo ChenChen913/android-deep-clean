@@ -426,19 +426,22 @@ def test_executor_refuses_file_outside_target_directory():
 
 
 def test_execute_refuses_real_symlink_from_tampered_manifest(env):
-    real = CACHE + "/real.bin"
-    env.phone.file(real, size=300)
-    link_host = env.phone.host(CACHE + "/link.bin")
-    real_host = env.phone.host(real)
-    try:
-        os.symlink(real_host, link_host)
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"当前环境无法创建符号链接（Windows 需要开发者模式/管理员）: {exc}")
-
+    target = "/sdcard/Misc/real_target.bin"
+    env.phone.file(target, size=300)
+    env.phone.file(CACHE + "/a.bin", size=300)
     env.prepare_analysis()
     env.plan_now(None)
     selection = env.select_all_safe()
     candidate_id = selection["items"][0]["id"]
+
+    # Create the link only after analyze/plan, then inject it into the manifest:
+    # the link itself must be refused and its target must survive.
+    link_host = env.phone.host(CACHE + "/link.bin")
+    real_host = env.phone.host(target)
+    try:
+        os.symlink(real_host, link_host)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"当前环境无法创建符号链接（Windows 需要开发者模式/管理员）: {exc}")
     _inject_manifest_row(env, candidate_id, CACHE + "/link.bin")
 
     result = env.execute()

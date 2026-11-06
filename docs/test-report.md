@@ -12,6 +12,7 @@
 |---|---|---|
 | ubuntu-latest 上 Python 3.9 不存在 | runner 已迁移到 Ubuntu 26.04，toolcache 无 3.9 | CI 矩阵改用 ubuntu-22.04 |
 | Linux 上符号链接用例失败 | mock `_to_device()` 用 `resolve()` 跟随链接，链接项被登记为目标路径并覆盖真实文件 | 改为 `normpath()` 保留链接自身路径 |
+| Windows CI 符号链接用例断言失败 | 链接在扫描前创建，真实目标文件本身成为候选并被正常隔离 | 夹具改为 analyze/plan 后创建链接，再注入 manifest |
 
 验证：
 
