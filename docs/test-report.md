@@ -4,8 +4,9 @@
 
 | 维度 | 当前结果 |
 |---|---|
+| 验证提交 | `0da6dbc`（v1.2.3） |
 | 本地 Mock | 188 passed / 1 skipped（189 collected） |
-| CI | ubuntu-22.04 / windows-latest × Python 3.9 / 3.13，最近一次全部成功 |
+| CI | 运行 `42176663215`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
 | 真实 Android 设备 | 0 台完成验收 |
 | 真实 HarmonyOS 兼容版 | 0 台完成验收 |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
