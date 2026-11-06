@@ -18,7 +18,7 @@
 
 - WSL Linux 复现：修复前 `entries=6 / files=0 / items=[]`，修复后 `entries=7 / files=1 / items=[app_cache]`。
 - Windows 本地全量：186 passed / 1 skipped（符号链接用例本次实际执行并通过）。
-- CI 结果以 GitHub Actions 最新运行结果为准。
+- CI：4/4 矩阵作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13，run 42174357272）。
 
 ## v1.2.1 CI 修复复测（2026-11-06）
 
