@@ -123,12 +123,14 @@ python "$Skill\scripts\adc.py" export --state $State --out D:\phone-report
 python "$Skill\scripts\adc.py" history --state $State
 ~~~
 
-手机端（Termux / Shizuku）：
+手机端（Termux / Shizuku），在 Skill 目录内执行（该目录包含 SKILL.md 与 scripts/）：
 
 ~~~powershell
 python scripts/adc.py doctor --state .adc-state --transport local
 python scripts/adc.py scan --state .adc-state --transport local
 python scripts/adc.py analyze --state .adc-state --transport local
 ~~~
+
+如果从仓库根目录运行，路径应为 `python android-deep-clean/scripts/adc.py`。Shizuku 用户把 `--transport local` 换成 `--transport rish --rish-path <rish 路径>`。
 
 两条通路共用同一套规则、风险分级和确认令牌；详细见 usb-adb-workflow.md 与 dual-path-architecture.md。

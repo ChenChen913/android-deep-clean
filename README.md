@@ -1,152 +1,537 @@
-# Android / HarmonyOS Deep Clean（手机深度清理 Skill）
+<h1 align="center">Android / HarmonyOS Deep Clean</h1>
 
-面向 Android 与华为 HarmonyOS 手机的 AI Agent 深度清理技能：只读扫描 → 证据分析 → AI 复核 → 用户选择 → 确认令牌 → 隔离清理 → 验证/复查。
+<p align="center">
+  <b>简体中文</b> | <a href="./README_EN.md">English</a>
+  <br><br>
+  <a href="https://github.com/ChenChen913/android-deep-clean/actions/workflows/ci.yml"><img src="https://github.com/ChenChen913/android-deep-clean/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/Python-3.9%2B-blue" alt="Python 3.9+">
+</p>
 
-支持**双通路**：手机端 Agent（Android/鸿蒙兼容版：Termux / Shizuku）与 Windows 电脑端 Agent（Android 用 USB + ADB，HarmonyOS NEXT 用 USB + HDC），共用同一套分类规则、风险分级、保护清单、确认机制、执行日志与验证标准。
+面向 Android 与 HarmonyOS 的 AI 深度清理 Skill：只读扫描、证据复核、隔离清理与恢复。
 
-HarmonyOS 会先识别系统类型再决定能力：兼容版沿用 Android 规则；NEXT 只处理公共目录与媒体库，明确不支持 APK、adb、Shizuku、Termux 和跨应用沙箱。完整矩阵见 [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)。
+> 当前状态：电脑端 USB + ADB 与手机端 local 通路的只读链路已在真机验证；隔离、验证、恢复已用自建测试文件在真机演练通过。**尚未对用户真实数据完成清理验收，HarmonyOS NEXT 真机验收数为 0。** 未达到正式清理工具门槛，进度见 [真机验收清单](docs/real-device-test-plan.md)。
 
-核心不是“删得快”，而是：**发现长期积累、隐藏较深、普通清理工具忽略的无用文件，同时绝不误删用户重要数据。**
+真实终端节选（HONOR HLK-AL00，HarmonyOS 3.0 兼容版 / Android 10，USB + ADB，序列号已隐去）：
 
-> 当前状态：Mock 与 CI 通过；真实设备只读链路已在 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）的 local 与 USB+ADB 两条通路验证；隔离/恢复机制已用自建测试文件演练通过；**尚未对用户真实数据执行清理，HarmonyOS NEXT 真机验收数为 0**。未达到正式清理工具门槛，详见 [真机验收清单与发布门槛](docs/real-device-test-plan.md)。
+```text
+$ python "$Skill/scripts/adc.py" devices --adb-path adb
+<serial>  device  product:HLK-AL00 model:HLK_AL00
 
-## 两条通路
+$ python "$Skill/scripts/adc.py" scan --state .adc-state --transport adb --serial <serial> --json --quiet
+{"roots_scanned": ["/sdcard"], "stats": {"entries": 125855, "files": 117007, "bytes": 25093192713}, "truncated": false}
 
-| 通路 | 场景 | 连接方式 | 关键参数 |
-|---|---|---|---|
-| A 手机端（Android / 鸿蒙兼容版） | 没有电脑，手机上的 Agent | Termux 本机 / Shizuku rish | --transport local / rish |
-| A 手机端（HarmonyOS NEXT） | 当前不支持 | 无 Android APK / Termux / Shizuku | 使用电脑端 hdc |
-| B 电脑端（Android / 鸿蒙兼容版） | Windows 11 + USB 数据线，需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
-| B 电脑端（HarmonyOS NEXT） | Windows + USB，公共目录清理与电脑备份 | HDC（USB / 无线调试） | --transport hdc --serial <connect-key> |
+$ python "$Skill/scripts/adc.py" analyze --state .adc-state --transport adb --serial <serial> --json --quiet
+{"summary": {"candidate_groups": 59, "candidate_files": 74885,
+             "candidate_bytes": 5390767059, "review_required": 56}}
+```
 
-两条通路调用同一个 CLI、同一套 adc_lib 规则与同一状态机；电脑端只是在 Transport 层通过 adb/hdc 执行。详细说明：
+清理流程的强制顺序：
 
-- [电脑端 USB+ADB 工作流](android-deep-clean/references/usb-adb-workflow.md)
-- [HarmonyOS Agent 参考](android-deep-clean/references/harmonyos.md)
-- [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)
-- [双通路架构与能力边界](android-deep-clean/references/dual-path-architecture.md)
+```mermaid
+flowchart LR
+  A[doctor 只读体检] --> B[scan 只读扫描]
+  B --> C[analyze 候选与证据]
+  C --> D{AI 逐项复核}
+  D -->|trash| E[plan 计划]
+  D -->|keep / uncertain| F[保留]
+  E --> G[select 选择清单 + 令牌]
+  G --> H{用户明确确认}
+  H -->|否| F
+  H -->|是| I[execute 隔离 / 可选电脑备份]
+  I --> J[verify 验证]
+  J --> K{下一步}
+  K -->|满意| L[quarantine purge 释放空间]
+  K -->|需要| M[restore 恢复]
+```
 
-## 电脑端快速开始（Windows 11）
+## 目录
 
-1. 安装 Python 3.9+ 与 Android 官方 Platform Tools（含 adb.exe，不需要 Android Studio）。
-2. 手机开启开发者选项 → USB 调试，用数据线连接，手机解锁并允许 RSA 授权。
-3. 安装 Skill 并确认设备：
+- [为什么做这个项目](#为什么做这个项目)
+- [快速开始](#快速开始)
+- [用法](#用法)
+- [配置](#配置)
+- [项目结构](#项目结构)
+- [开发](#开发)
+- [常见问题](#常见问题)
+- [已知限制](#已知限制)
+- [如何贡献](#如何贡献)
+- [许可证](#许可证)
 
-~~~powershell
-# 安装/更新：先备份旧目录，复制后校验，失败自动回滚
+## 为什么做这个项目
+
+普通清理工具通常按目录名、文件年龄或体积判断，容易把聊天图片、卸载残留里的游戏存档、离线安装包一起扫掉，也不会解释“为什么建议删”。
+
+这个项目把清理拆成可审计的步骤：
+
+- 扫描只读，报告写明每个候选的路径、数量、大小、年龄、应用是否仍安装；
+- AI 必须逐项复核并写出理由，未复核的 CAUTION 不能进入选择清单；
+- 用户选择后生成确认令牌，没有令牌不能执行；
+- 默认把文件移动到设备隔离区，可恢复；永久删除是单独、显式的第二步；
+- 执行前重新校验大小、mtime、inode，文件有变化就跳过并报告。
+
+核心目标不是“删得快”，而是发现长期积累、隐藏较深、普通工具忽略的文件，同时不误删重要数据。
+
+## 快速开始
+
+前置要求：
+
+| 项目 | 要求 |
+|---|---|
+| Python | 3.9+（产品代码只用标准库，不需要 pip 安装依赖） |
+| 电脑端（Android / HarmonyOS 兼容版） | Windows 10/11 或 macOS/Linux，Android 官方 Platform Tools（含 `adb`，不需要 Android Studio） |
+| 电脑端（HarmonyOS NEXT） | 含 `hdc` 的 HarmonyOS Command Line Tools 或 SDK toolchains（不需要 DevEco Studio 全套 IDE） |
+| 手机端（可选） | Android 手机 + Termux，或 Shizuku + rish |
+| 测试（可选） | pytest |
+
+安装到 Agent Skills 目录（Windows）：
+
+```powershell
+git clone https://github.com/ChenChen913/android-deep-clean.git
+cd android-deep-clean
 powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_skill.ps1
+python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
+```
 
+最后一条命令应输出 `android-deep-clean 1.2.8`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+
+macOS / Linux 安装到通用 skills 目录：
+
+```bash
+git clone https://github.com/ChenChen913/android-deep-clean.git
+mkdir -p ~/.agents/skills
+cp -R android-deep-clean ~/.agents/skills/android-deep-clean
+python ~/.agents/skills/android-deep-clean/scripts/adc.py --version
+```
+
+也可以不安装，直接从仓库运行 `python android-deep-clean/scripts/adc.py --help`。
+
+卸载（Windows）：
+
+```powershell
+Remove-Item -Recurse -Force "$env:USERPROFILE\.agents\skills\android-deep-clean"
+Remove-Item -Recurse -Force .adc-state
+```
+
+删除状态目录会同时失去隔离区的恢复 journal。确认隔离区没有需要恢复的文件后再删。
+
+## 用法
+
+先选通路。三条通路共用同一套分类、风险等级、保护清单、确认令牌、执行器和验证器，区别只在 Transport 层。
+
+| 通路 | 适用设备 | 连接方式 | 关键参数 |
+|---|---|---|---|
+| A 电脑端 ADB | Android、HarmonyOS 1.x–4.x 兼容版 | USB 数据线 + USB 调试 | `--transport adb --serial <序列号>` |
+| B 手机端 | Android、HarmonyOS 1.x–4.x 兼容版 | Termux 本机 shell 或 Shizuku rish | `--transport local` 或 `--transport rish` |
+| C 电脑端 HDC | HarmonyOS NEXT（5+） | USB / 无线调试 + `hdc` | `--transport hdc --serial <connect-key> --hdc-path hdc` |
+
+HarmonyOS NEXT 不能运行本项目的手机端通路：它没有 Android 运行时，也没有 Termux、Shizuku、adb。
+
+### 电脑端：USB + ADB 完整流程
+
+所有通用参数必须写在子命令之后，例如 `doctor --state ...`，不能写成 `--state ... doctor`。多设备时必须用 `--serial` 指定目标。
+
+**第 1 步：准备手机**
+
+1. 设置 → 关于手机，连续点击版本号 7 次，开启开发者选项。
+2. 开发者选项 → 打开 USB 调试。
+3. 用数据线连接电脑，USB 模式选“传输文件”或“仅充电”均可。
+4. 解锁手机，在“允许 USB 调试吗”弹窗中勾选始终允许并确认。
+
+**第 2 步：准备电脑**
+
+安装 Android 官方 Platform Tools，确认 `adb version` 能运行。不需要安装 Android Studio。
+
+**第 3 步：确认设备**
+
+```powershell
 $Skill = "$env:USERPROFILE\.agents\skills\android-deep-clean"
 $State = ".adc-state"
+$Serial = "<序列号>"
+
 python "$Skill\scripts\adc.py" devices --adb-path adb
-python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial <序列号>
-~~~
+```
 
-4. 扫描/分析（电脑端可把重复候选拉到电脑算哈希）：
+状态说明：
 
-~~~powershell
-python "$Skill\scripts\adc.py" scan    --state $State --transport adb --serial <序列号>
-python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号> --hash-mode pc
-~~~
+| 状态 | 含义与处理 |
+|---|---|
+| `device` | 已授权，可以继续 |
+| `unauthorized` | 手机上没点允许；重新插拔并解锁手机 |
+| `offline` | 重新插拔，或在手机上关闭再打开 USB 调试 |
+| `no permissions` | 检查数据线、USB 模式与驱动 |
 
-5. AI 按 SKILL.md 复核 → plan → 用户选择 → select 令牌 → 用户确认 → execute：
+如果 `adb` 不在 PATH，用实际路径替换：`--adb-path "$env:LOCALAPPDATA\Android\platform-tools\adb.exe"`。
 
-~~~powershell
-python "$Skill\scripts\adc.py" plan   --state $State --transport adb --serial <序列号> --review review.json
-python "$Skill\scripts\adc.py" select --state $State --transport adb --all-safe
-python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial <序列号> --token <TOKEN> --backup-to D:\phone-backup
-python "$Skill\scripts\adc.py" verify --state $State --transport adb --serial <序列号>
+**第 4 步：只读体检**
+
+```powershell
+python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial $Serial
+```
+
+读报告里的设备型号、系统版本、总容量与可用空间、权限级别，以及哪些路径不可读。权限级别为 `blocked` 时停止，不要继续扫描。
+
+**第 5 步：只读扫描**
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+```
+
+默认扫描 `/sdcard`；Root 下会追加 `/data/data/*/cache`。常用参数：`--roots /sdcard/Download`、`--max-depth 32`、`--max-files 500000`、`--no-internal`。扫描结果写入 SQLite 快照，不改手机文件。
+
+**第 6 步：分析并生成证据**
+
+```powershell
+# 设备端计算重复文件哈希（默认）
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial $Serial
+
+# 或：只把大小相同的重复候选拉到电脑，本地计算 SHA-256
+python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial $Serial --hash-mode pc
+```
+
+产出：
+
+| 文件 | 用途 |
+|---|---|
+| `report-before.md` | 人类可读的清理前报告 |
+| `analysis-summary.json` | AI 优先读的摘要 |
+| `analysis.db` | 完整候选与逐文件清单 |
+| `review-template.json` | 复核模板 |
+
+**第 7 步：AI 复核**
+
+AI 读 `analysis-summary.json`，对体积大、风险高、证据弱的候选运行：
+
+```powershell
+python "$Skill\scripts\adc.py" inspect --state $State --transport adb --serial $Serial --id <候选ID> --list-paths
+```
+
+把结论写成 `review.json`，格式见 [SKILL.md](android-deep-clean/SKILL.md) 与 [复核指南](android-deep-clean/references/review-guide.md)。未复核的 CAUTION 不能进入选择清单。
+
+**第 8 步：生成计划**
+
+```powershell
+python "$Skill\scripts\adc.py" plan --state $State --transport adb --serial $Serial --review "$State\analysis\review.json"
+```
+
+plan 只生成计划，不执行。把可选范围、风险、保留建议展示给用户。
+
+**第 9 步：用户选择并生成令牌**
+
+```powershell
+# 按分类选择（示例）
+python "$Skill\scripts\adc.py" select --state $State --transport adb --serial $Serial --categories app_cache,thumbnails
+
+# 只选所有可选 SAFE 项
+python "$Skill\scripts\adc.py" select --state $State --transport adb --serial $Serial --all-safe
+
+# 精确 ID（最安全）
+python "$Skill\scripts\adc.py" select --state $State --transport adb --serial $Serial --ids app_cache-xxxxxxxxxx
+```
+
+select 不执行，只输出清单与确认令牌。必须把路径、数量、大小、风险展示给用户，并得到明确确认。用户拒绝就停止。
+
+**第 10 步：执行（默认隔离）**
+
+```powershell
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial $Serial --token <确认令牌>
+
+# 清理前把选中文件备份到电脑：备份或校验失败则跳过该文件，源文件保留
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial $Serial --token <确认令牌> --backup-to D:\phone-backup
+```
+
+永久删除需要单独确认，且 selection 必须用 delete 模式生成、只包含 SAFE：
+
+```powershell
+python "$Skill\scripts\adc.py" select --state $State --transport adb --serial $Serial --all-safe --mode delete
+python "$Skill\scripts\adc.py" execute --state $State --transport adb --serial $Serial --token <令牌> --mode delete --allow-permanent-delete
+```
+
+执行中文件变化、权限失败、符号链接都会跳过并写入报告，不要改成“强行删除”。
+
+**第 11 步：验证**
+
+```powershell
+python "$Skill\scripts\adc.py" verify --state $State --transport adb --serial $Serial
 python "$Skill\scripts\adc.py" export --state $State --out D:\phone-report
-~~~
+```
 
-6. 复查/历史/恢复：
+报告必须区分：逻辑处理量、实际已释放、隔离区占用。隔离模式下实际释放为 0，purge 后才有真实释放。
 
-~~~powershell
-python "$Skill\scripts\adc.py" history --state $State
-python "$Skill\scripts\adc.py" recheck --state $State --transport adb --serial <序列号>
-python "$Skill\scripts\adc.py" restore --state $State --transport adb --serial <序列号> --all
-~~~
+**第 12 步：恢复或释放**
 
-## 手机端快速开始
+```powershell
+# 恢复：全部或指定 ID
+python "$Skill\scripts\adc.py" restore --state $State --transport adb --serial $Serial --all
+python "$Skill\scripts\adc.py" restore --state $State --transport adb --serial $Serial --ids <候选ID>
 
-~~~powershell
-python scripts/adc.py doctor  --state .adc-state --transport local
-python scripts/adc.py scan    --state .adc-state --transport local
-python scripts/adc.py analyze --state .adc-state --transport local
-~~~
+# 永久释放隔离区（不可恢复，需再次确认）
+python "$Skill\scripts\adc.py" quarantine purge --state $State --transport adb --serial $Serial --token <PURGE_TOKEN>
+```
 
-Shizuku 环境用 --transport rish --rish-path rish。其余流程和电脑端完全相同。
+### 手机端：Termux（--transport local）
 
-## 电脑端专属能力
+适用于没有电脑的场景。手机需要能运行 Python 3.9+。
 
-- **设备发现/多设备**：devices 列出 serial/状态；多设备必须 --serial，避免操作错手机。
-- **设备身份绑定**：doctor/scan/plan/selection/execution 携带 device_identity；execute 前校验当前手机必须是计划中的那台。
-- **断开保护**：每项执行前检查连接；检测到断开立即 aborted，后续项目不再执行。
-- **电脑本地哈希**：analyze --hash-mode pc 只把大小相同的重复候选通过 USB 拉到电脑，本地计算 SHA-256。
-- **电脑备份**：execute --backup-to DIR 在清理前复制并校验文件；备份失败则不清理源文件。
-- **CSV 导出**：export 生成候选、完整文件、执行结果 CSV；Markdown 报告仍由各阶段生成。
-- **历史扫描**：scan 自动归档上一轮快照到 history/scan-*；history 查看。
-- **前后对比**：execution/verify 记录逻辑处理量、隔离量、实际释放与可用空间变化。
+```bash
+# Termux（建议从 F-Droid 安装）
+pkg install python git
+termux-setup-storage
 
-## HarmonyOS 快速开始
+git clone https://github.com/ChenChen913/android-deep-clean.git
+cd android-deep-clean
 
-HarmonyOS 兼容版（1.x–4.x）继续用上面的 adb 流程。HarmonyOS NEXT 需要 hdc：
+python android-deep-clean/scripts/adc.py doctor  --state .adc-state --transport local
+python android-deep-clean/scripts/adc.py scan    --state .adc-state --transport local
+python android-deep-clean/scripts/adc.py analyze --state .adc-state --transport local
+```
 
-~~~powershell
-# 1) 确认 hdc（来自 HarmonyOS Command Line Tools / SDK toolchains，不需要完整 IDE）
+与电脑端的区别：
+
+- 不需要 `--serial`、`--adb-path`；
+- 状态目录和隔离区都在手机上；
+- 只有共享存储可读，`/data/data` 不可读；
+- 扫描到 `Android/data` 的结果取决于系统 scoped storage 限制，报告会写明打不开的路径。
+
+后续的 inspect、plan、select、execute、verify、restore 与电脑端完全一致，只是把 `--transport adb --serial ...` 换成 `--transport local`。
+
+### 手机端：Shizuku（--transport rish）
+
+Shizuku 通过 rish 提供 ADB shell 等价权限：
+
+```bash
+python android-deep-clean/scripts/adc.py doctor  --state .adc-state --transport rish --rish-path /path/to/rish
+python android-deep-clean/scripts/adc.py scan    --state .adc-state --transport rish --rish-path /path/to/rish
+python android-deep-clean/scripts/adc.py analyze --state .adc-state --transport rish --rish-path /path/to/rish
+```
+
+能力与 ADB shell 相同，不能读取 `/data/data`。使用前先在手机上启动 Shizuku 并确认其服务处于运行状态。
+
+### HarmonyOS NEXT：电脑端 HDC
+
+HarmonyOS NEXT 没有 Android 运行时，必须用电脑端 `hdc`。先确认工具与设备：
+
+```powershell
 hdc list targets -v
 
-# 2) 识别平台与权限（报告里看 platform / capabilities / limitations）
-python "$Skill\scripts\adc.py" doctor --state $State --transport hdc --serial <connect-key>
+python "$Skill\scripts\adc.py" doctor  --state $State --transport hdc --serial <connect-key> --hdc-path hdc
+python "$Skill\scripts\adc.py" scan    --state $State --transport hdc --serial <connect-key> --hdc-path hdc
+python "$Skill\scripts\adc.py" analyze --state $State --transport hdc --serial <connect-key> --hdc-path hdc
+```
 
-# 3) 只读扫描公共目录与媒体库
-python "$Skill\scripts\adc.py" scan    --state $State --transport hdc --serial <connect-key>
-python "$Skill\scripts\adc.py" analyze --state $State --transport hdc --serial <connect-key>
-~~~
+能力边界：
 
-NEXT 只处理 `/storage/media/100/local/files` 与媒体库；应用私有缓存逐文件扫描、卸载残留、手机端 Agent 都不支持。`bm clean -c` 仅报告能力，不自动执行。详见 [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)。
+- 只处理公共目录 `/storage/media/100/local/files` 与媒体库 `/mnt/data/<uid>/media_fuse/Photo`；
+- 不支持 APK、adb、Shizuku、Termux，不能按文件扫描其他应用缓存；
+- `bm clean -c` 只报告能力，不自动执行；
+- 路径在不同设备/用户下的可用性以 doctor 报告为准，目前未完成 NEXT 真机验证。
 
-## 安全设计（摘要）
+HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB 流程。
 
-- 扫描/分析全程只读；execute 前需要 select 生成的确认令牌。
-- 默认 quarantine 到设备隔离区；永久删除必须 --allow-permanent-delete 且只允许 SAFE。
-- plan_hash / selection_hash / 令牌三重校验，且绑定设备身份；执行前重新 stat 校验大小/mtime/inode；变化即跳过。
-- 路径白名单/黑名单、realpath 检查、拒绝符号链接与路径穿越；不使用递归删除。
-- DANGEROUS（数据库/密钥/应用数据/已安装 OBB/个人原片/聊天媒体）永不可选。
-- 权限不足、扫描截断、失败项、断连都写入报告，不假装完整。
-- 电脑端绝不自动授权未知电脑、不自动 root、不通过危险命令突破权限。
+### 四种工作模式
+
+| 模式 | 步骤 | 是否改手机 |
+|---|---|---|
+| A 全盘体检 | doctor → scan → analyze，输出清理前报告 | 否 |
+| B 深度清理 | doctor → scan → analyze → AI 复核 → plan → 用户选择 → execute → verify | 是 |
+| C 专项清理 | 先 scan/analyze，再按分类、应用类型或 ID 缩小 select 范围 | 是 |
+| D 清理复查 | recheck 重新扫描并对比上一轮 | 否（写新快照） |
+
+专项清理的常用选择：
+
+| 目标 | 选择参数 |
+|---|---|
+| 微信 / QQ 缓存 | `--categories chat_cache` |
+| 卸载残留 | `--categories residue`（逐包复核） |
+| 旧 APK | `--categories apk` |
+| 重复照片 / 视频 | `--categories duplicates`（逐组确认） |
+| 长期未用大文件 | `--categories large_old,media_old` |
+| 浏览器缓存 | `--app-kinds browser` 或 `--categories browser_cache` |
+| 空目录 | `--categories empty_dirs`（只用 rmdir） |
+| 只清 SAFE | `--all-safe` |
+
+### 命令总表
+
+| 命令 | 用途 | 修改设备 |
+|---|---|---|
+| `devices` | 列出 ADB 设备与授权状态 | 否 |
+| `doctor` | 探测设备、存储、权限与可用命令 | 否 |
+| `scan` | 只读扫描，写入 SQLite 快照 | 否 |
+| `analyze` | 生成候选、证据、风险与清理前报告 | 否 |
+| `inspect` | 查看单个候选的完整清单或预览 | 否（`--pull` 只读取设备） |
+| `plan` | 合并 AI 复核结论，生成计划 | 否 |
+| `select` | 生成选择清单与确认令牌 | 否 |
+| `execute` | 按令牌执行；默认移入隔离区 | 是 |
+| `verify` | 验证执行结果 | 否 |
+| `quarantine purge` | 永久删除隔离文件，真正释放空间 | 是 |
+| `restore` | 从隔离区恢复文件 | 是 |
+| `recheck` | 重新扫描并与上一轮对比 | 否（写新快照） |
+| `export` | 导出候选、文件清单与执行结果 CSV | 否 |
+| `history` | 查看历史扫描快照 | 否 |
+
+退出码：
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 2 | 用法错误 |
+| 3 | 安全策略拒绝（令牌、风险、用户未确认、不可选） |
+| 4 | 设备 / 传输错误 |
+| 5 | 输入或状态文件校验失败 |
+| 6 | 执行 / 验证 / purge / restore 部分失败（仍会写报告） |
+| 1 | 未预期错误 |
+| 130 | 中断 |
+
+### 安全边界（调用方必须遵守）
+
+- 不得绕过本 CLI 直接对手机执行 `rm`、`mv`、`find -delete`、`pm clear` 等命令。
+- 不得把 DANGEROUS 项加入选择，不得下调风险等级。
+- 未经用户明确同意，不得运行 `execute`、`quarantine purge`、`restore`。
+- 不得删除系统目录、应用数据库与账号数据、已安装应用的 OBB、聊天记录与聊天媒体、个人照片视频原片、未知用途文件。
+- 不得跟随符号链接；不得清空整个目录；只处理候选清单中的具体路径。
+- 执行前由 CLI 重新校验大小、mtime、inode，有变化就跳过并报告。
+- 多设备必须指定 `--serial`；执行前校验当前设备身份与计划一致。
+- 使用 `--backup-to` 时，备份或校验失败必须保留源文件。
+- 不得把 Android 的 `/sdcard`、`pm`、`Android/data` 规则套用到 HarmonyOS NEXT。
+- 未在真机验证的能力必须在报告中标注“待验证”。
+
+## 配置
+
+| 配置项 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `ADC_STATE` 环境变量 | 否 | `.adc-state` | 状态目录默认值，等价于 `--state` |
+| `--state` | 否 | `.adc-state` | doctor/scan/analyze/plan/select/execute 的产物目录 |
+| `--transport` | 是（默认 adb） | `adb` | `adb`、`hdc`、`rish`、`local`、`mock` |
+| `--serial` | 多设备必填 | 空 | ADB 序列号；hdc 模式为 connect-key |
+| `--adb-path` | 否 | `adb` | `adb` 可执行文件路径 |
+| `--hdc-path` | 否 | `hdc` | hdc 模式必填时使用 |
+| `--rish-path` | 否 | `rish` | Shizuku 模式使用 |
+| `--config` | 否 | 内置默认值 | JSON 配置，覆盖阈值与安全策略 |
+| `--json` / `--quiet` | 否 | 关闭 | 机器可读输出 / 减少进度输出 |
+
+`--config` 示例：
+
+```json
+{
+  "thresholds": {
+    "apk_old_days": 180,
+    "temp_old_days": 30,
+    "download_old_days": 30
+  },
+  "safety": {
+    "generic_cache_risk": "caution"
+  }
+}
+```
+
+主要默认阈值（来源 `scripts/adc_lib/config.py`）：
+
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `large_file_bytes` | 104857600 | 大文件阈值（100 MiB） |
+| `old_file_days` | 365 | 大文件年龄阈值 |
+| `apk_old_days` | 180 | 旧 APK 阈值 |
+| `archive_old_days` | 180 | 旧压缩包阈值 |
+| `temp_old_days` | 30 | 临时文件阈值 |
+| `log_old_days` | 90 | 日志阈值 |
+| `screenshot_old_days` | 180 | 旧截图阈值 |
+| `media_old_days` | 730 | 旧媒体阈值 |
+| `download_old_days` | 30 | 旧下载阈值 |
+| `safety.generic_cache_risk` | `caution` | 通用缓存风险策略；设为 `safe` 可恢复旧行为 |
 
 ## 项目结构
 
-| 路径 | 内容 |
-|---|---|
-| android-deep-clean/SKILL.md | 技能主说明（平台 Skill 入口） |
-| android-deep-clean/scripts/adc.py | CLI 入口 |
-| android-deep-clean/scripts/adc_lib/ | transport / scan / rules / analyze / plan / execute / verify / export |
-| android-deep-clean/references/ | 安全策略、权限矩阵、路径规则、复核指南、USB+ADB 工作流、HarmonyOS 适配、双通路架构 |
-| tests/ | pytest 模拟 Android 与 HarmonyOS NEXT 设备测试套件 |
-| docs/ | 安装使用、权限兼容、HarmonyOS 兼容性、测试报告、研究、限制、CHANGELOG |
+```text
+.
+├── android-deep-clean/          # Skill 本体
+│   ├── SKILL.md                 # Agent 读取的技能说明
+│   ├── scripts/
+│   │   ├── adc.py               # CLI 入口，14 个子命令
+│   │   ├── install_skill.ps1    # 备份、复制、校验、失败回滚
+│   │   └── adc_lib/             # 传输、扫描、分析、计划、执行、报告
+│   └── references/              # 安全策略、路径规则、复核指南、USB/ADB、鸿蒙等
+├── tests/                       # pytest 用例与 mock 夹具（不需要手机）
+├── docs/                        # 安装、CLI 契约、鸿蒙支持、真机验收、测试报告
+├── tools/build_dist.ps1         # 打包脚本
+└── .github/workflows/ci.yml     # ubuntu-22.04 / windows-latest × Python 3.9 / 3.13
+```
 
-## 测试
+## 开发
 
-~~~powershell
+运行全量测试（不需要手机、不需要网络）：
+
+```powershell
 python -m pytest tests -q
-~~~
+```
 
-测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前本地全量结果：192 passed / 1 skipped / 0 failed（193 collected）。skip 为 Windows 目录联接环境限制，符号链接用例在可创建链接的环境中会实际执行；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 [真机验收清单](docs/real-device-test-plan.md)。
+2026-11-06 / v1.2.8 实测：195 passed, 1 skipped（196 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
-## 文档
+CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
-- [安装与使用](docs/install-and-usage.md)
-- [权限与兼容性](docs/permissions-and-compatibility.md)
-- [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)
-- [测试报告](docs/test-report.md)
-- [真机验收清单与发布门槛](docs/real-device-test-plan.md)
-- [限制与路线图](docs/limitations-and-roadmap.md)
-- [Android 存储研究](docs/research-android-storage.md)
-- [CLI 契约](docs/cli-contract.md)
-- [变更记录](CHANGELOG.md)
+无手机时可以用 mock 传输测试完整流程：
+
+```powershell
+python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport mock --mock-root .tmp\phone --mock-packages .tmp\packages.json --mock-caps .tmp\caps.json
+```
+
+fixture 格式见 [CLI 契约](docs/cli-contract.md)。
+
+## 常见问题
+
+**Q：`adb devices` 显示 `unauthorized`？**
+A：解锁手机，在 RSA 授权弹窗点允许；没有弹窗就重新插拔数据线，或关闭再打开 USB 调试。
+
+**Q：`Android/data` 读不到，是不是 Skill 有问题？**
+A：不是。Android 11+ 的 scoped storage 会限制普通 ADB shell。doctor 会如实把权限级别标为 `limited`，报告里写明无法访问的路径，不会假装扫描完整。
+
+**Q：执行成功了，为什么可用空间没变？**
+A：默认是隔离模式，文件只是移动到设备隔离区，仍然占用空间。确认无误后执行 `quarantine purge` 才会真正释放。
+
+**Q：为什么 CAUTION 项不能直接选？**
+A：CAUTION 需要 AI 复核并写入 `review.json`，再运行 `plan`。未复核的 CAUTION 不会进入选择清单，这是刻意设计。
+
+**Q：HarmonyOS NEXT 能用 adb 吗？**
+A：不能。NEXT 没有 Android 运行时，必须用 `--transport hdc`；只有 HarmonyOS 1.x–4.x 兼容版继续用 adb。
+
+**Q：可以删除 `.adc-state` 吗？**
+A：可以，但会失去隔离区的恢复 journal，之后无法用 `restore` 找回隔离文件。
+
+**Q：同时连接两台手机？**
+A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定设备身份，换机执行会被拒绝。
+
+## 已知限制
+
+- 非 Root 无法读取 `/data/data`；部分 ROM 的 `Android/data` 也不可读。
+- 通用应用缓存与浏览器缓存默认 CAUTION，需要逐项复核；只有缩略图与明确临时日志默认 SAFE。
+- 隔离不释放空间；执行报告会分别列出已隔离、未处理、已实际释放与隔离区占用。
+- 相似图片不做视觉比对，只识别完全重复；重复项仍需用户确认。
+- atime 在 Android 上通常不可靠，年龄判断主要用 mtime；异常时间戳（早于 2000 年或晚于当前 24 小时）不参与候选筛选。
+- 不覆盖系统级清理（系统缓存分区、OTA 等），不保证所有 ROM 的 `pm`/`find` 行为一致。
+- 隔离与恢复依赖本机状态目录；状态目录丢失后无法自动恢复。
+- HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，`bm clean` 未接入执行器。
+- 手机端 Termux / Shizuku 通路尚未完成真机验收。
+
+真机验证进度：
+
+| 项目 | 状态 |
+|---|---|
+| 真实设备只读（local + ADB） | 1 台通过：HONOR HLK-AL00，HarmonyOS 3.0 兼容版 / Android 10 |
+| 隔离 / 验证 / 恢复 | 1 台通过，仅自建测试文件 |
+| 用户真实数据清理 | 0 台完成验收 |
+| 永久删除（purge） | 真机未验证 |
+| Shizuku / Termux 原生环境 | 真机未验证 |
+| HarmonyOS NEXT（hdc） | 0 台完成验收 |
+
+详见 [测试报告](docs/test-report.md) 与 [真机验收清单](docs/real-device-test-plan.md)。
+
+## 如何贡献
+
+欢迎提 Issue 和 PR。改动清理规则或安全逻辑时，请同时补回归用例，并确保 `python -m pytest tests -q` 通过；不要为了让测试通过而放宽安全断言。
+
+问题反馈请到 [Issues](https://github.com/ChenChen913/android-deep-clean/issues)。提交前建议先读 [安全策略](android-deep-clean/references/safety-policy.md) 与 [CLI 契约](docs/cli-contract.md)。
+
+维护者：仓库所有者 [@ChenChen913](https://github.com/ChenChen913)。
 
 ## 许可证
 
-MIT。研究仅借鉴 SD Maid 2/SE、SpaceSweep、Android Device Optimizer 等项目的设计思路；未复制其代码。第三方许可证说明见 docs/research-android-storage.md 与 NOTICE。
+[MIT](LICENSE) © 2026 Android Deep Clean contributors

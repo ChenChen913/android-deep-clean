@@ -88,6 +88,31 @@ adb shell getprop ro.build.version.release
 - 用户已有 Magisk/KernelSU 等，可加 --root-mode su。
 - 仍需走完整确认流程；Root 不是跳过安全机制的理由。
 
+### 3.4 Termux（手机端，无需电脑）
+
+适用于 Android / HarmonyOS 兼容版；HarmonyOS NEXT 不支持。
+
+1. 从 F-Droid 安装 Termux。
+2. 安装 Python 并授权共享存储：
+
+~~~bash
+pkg install python git
+termux-setup-storage
+~~~
+
+3. 克隆或复制本仓库到 Termux 可写目录。
+4. 在仓库根目录执行：
+
+~~~bash
+python android-deep-clean/scripts/adc.py doctor  --state .adc-state --transport local
+python android-deep-clean/scripts/adc.py scan    --state .adc-state --transport local
+python android-deep-clean/scripts/adc.py analyze --state .adc-state --transport local
+~~~
+
+后续 inspect / plan / select / execute / verify / restore 与电脑端相同，只是不需要 `--serial` 与 `--adb-path`。
+
+限制：无 root 时 `/data/data` 不可读；Android 11+ 的 `Android/data` 是否可读取决于系统限制，以 doctor 报告为准。Shizuku 用户改用 `--transport rish --rish-path <rish 路径>`。
+
 ## 4. 基本流程
 
 所有命令的通用参数写在子命令之后。建议变量：
