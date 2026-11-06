@@ -17,6 +17,7 @@ from typing import Any, Iterable
 
 from .device import Doctor, doctor_markdown
 from .models import Entry, PackageIndex
+from .platform import HARMONY_NEXT, HARMONY_QUARANTINE_ROOT, profile_for
 from .rules import package_from_path
 from .state import State
 from .transport import Transport, TransportError
@@ -97,21 +98,25 @@ class Scanner:
     # -- root resolution --------------------------------------------------
     def resolve_roots(self, explicit: str | None, include_internal: bool | str) -> list[str]:
         caps = self.doctor.get("capabilities") or {}
+        platform = str(caps.get("platform") or "android")
+        profile = profile_for(platform)
         root_ok = caps.get("privilege") in {"root", "su"}
         if explicit:
             roots: list[str] = []
             for item in [x.strip() for x in explicit.split(",") if x.strip()]:
-                if item in {"sdcard", "/sdcard"}:
+                if item in {"sdcard", "/sdcard"} and platform != HARMONY_NEXT:
                     roots.append("/sdcard")
-                elif item in {"internal-cache", "internal"}:
+                elif item in {"internal-cache", "internal"} and platform != HARMONY_NEXT:
                     roots.extend(self._internal_cache_roots(root_ok))
+                elif item in {"public", "harmony-public"} and platform == HARMONY_NEXT:
+                    roots.extend(profile.default_roots)
                 else:
                     roots.append(normalize_device_path(item))
         else:
-            roots = ["/sdcard"]
-            if caps.get("sdcard_read") is False:
+            roots = list(profile.default_roots)
+            if platform != HARMONY_NEXT and caps.get("sdcard_read") is False:
                 roots = []
-            if include_internal and root_ok:
+            if platform != HARMONY_NEXT and include_internal and root_ok:
                 roots.extend(self._internal_cache_roots(True))
         # remove nested roots (keep the shallow one because it already covers children)
         cleaned: list[str] = []
@@ -125,7 +130,7 @@ class Scanner:
         if not root_ok:
             return []
         caps = self.doctor.get("capabilities") or {}
-        if not caps.get("internal_data_read"):
+        if caps.get("platform") == HARMONY_NEXT or not caps.get("internal_data_read"):
             return []
         try:
             return self.transport.find_dirs("/data/data", max_depth=2, names={"cache", "code_cache"})
@@ -187,6 +192,8 @@ class Scanner:
         total_bytes = 0
         started = time.monotonic()
         excludes = list(self.config.get("exclude_paths") or [])
+        if str((self.doctor.get("capabilities") or {}).get("platform") or "") == HARMONY_NEXT:
+            excludes.append(HARMONY_QUARANTINE_ROOT)
         seen_roots: list[str] = []
 
         for root in self.roots:
@@ -263,6 +270,7 @@ class Scanner:
             "device_identity": (self.doctor.get("device_identity") or {}),
             "previous_scan": previous_scan,
             "android": self.doctor.get("android", ""),
+            "platform": (self.doctor.get("platform") or "android"),
             "capabilities": (self.doctor.get("capabilities") or {}),
             "limitations": (self.doctor.get("limitations") or []),
             "packages": {

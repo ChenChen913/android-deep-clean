@@ -31,8 +31,10 @@ def _fmt_ts(value: Any) -> str:
 def analysis_markdown(analysis: dict[str, Any], config: dict[str, Any]) -> str:
     summary = analysis.get("summary") or {}
     items = analysis.get("items") or []
+    platform = str(analysis.get("platform") or "android")
+    title = {"harmonyos_next": "HarmonyOS NEXT", "harmonyos_compat": "HarmonyOS 兼容版"}.get(platform, "Android")
     lines = [
-        "# Android 深度清理分析报告（清理前）",
+        f"# {title} 深度清理分析报告（清理前）",
         "",
         "> 本报告为**只读分析**，尚未删除、移动或隔离任何文件。所有“可释放空间”均为逻辑大小估算。",
         "",

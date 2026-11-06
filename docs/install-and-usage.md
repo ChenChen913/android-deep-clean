@@ -7,9 +7,10 @@
 | 通路 | 环境 | 连接 | 命令示例 |
 |---|---|---|---|
 | 手机端 Agent | Android 手机上的 Termux / Agent | 本机 shell 或 Shizuku rish | --transport local / rish |
-| 电脑端 Agent | Windows 11 + USB 数据线 | ADB（Platform Tools） | --transport adb --serial <序列号> |
+| 电脑端 Agent（Android / 鸿蒙兼容版） | Windows 11 + USB 数据线 | ADB（Platform Tools） | --transport adb --serial <序列号> |
+| 电脑端 Agent（HarmonyOS NEXT） | Windows + USB | HDC（Command Line Tools toolchains） | --transport hdc --serial <connect-key> |
 
-电脑端不是另一套清理系统：分类、风险、保护规则、确认令牌、隔离/备份、日志与验证完全共用。电脑端完整流程见 references/usb-adb-workflow.md。
+电脑端不是另一套清理系统：分类、风险、保护规则、确认令牌、隔离/备份、日志与验证完全共用。电脑端完整流程见 references/usb-adb-workflow.md，HarmonyOS 见 references/harmonyos.md 与 docs/harmonyos-support.md。
 
 ## 1. 组成与要求
 
@@ -68,6 +69,7 @@ adb shell getprop ro.build.version.release
 ~~~
 
 - 安装 Android 官方 Platform Tools 即可，不需要 Android Studio。
+- HarmonyOS NEXT：安装包含 hdc 的 HarmonyOS Command Line Tools 或 SDK toolchains，不需要完整 DevEco Studio；用 --transport hdc --hdc-path hdc 连接。
 - 手机：开发者选项 → USB 调试；数据线连接；解锁手机并允许 RSA 授权。
 - 状态必须是 device；unauthorized 去手机点允许；offline 重新插拔/重开调试。
 - 无线调试（Android 11+）：无线调试 → 使用配对码 → adb pair IP:PORT → adb connect IP:DEBUG_PORT。

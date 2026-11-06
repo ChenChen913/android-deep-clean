@@ -359,6 +359,7 @@ def plan_hash_payload(plan: dict[str, Any]) -> dict[str, Any]:
     return {
         "analysis_id": plan.get("analysis_id"),
         "device_identity": (plan.get("device_identity") or {}).get("id", ""),
+        "platform": plan.get("platform") or "android",
         "items": payload,
     }
 
@@ -376,6 +377,7 @@ def selection_hash_payload(selection: dict[str, Any]) -> dict[str, Any]:
     return {
         "plan_hash": selection.get("plan_hash"),
         "device_identity": (selection.get("device_identity") or {}).get("id", ""),
+        "platform": selection.get("platform") or "android",
         "mode": selection.get("mode"),
         "items": [
             {key: item.get(key) for key in (

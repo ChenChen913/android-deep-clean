@@ -136,6 +136,11 @@ class Analyzer:
         self.sample_limit = int(config["report"]["sample_paths"])
         self.max_candidates = int(config["scan"]["max_candidates"])
         self.hash_mode = hash_mode if hash_mode in {"device", "pc"} else "device"
+        self.platform = str(
+            scan_meta.get("platform")
+            or (scan_meta.get("capabilities") or {}).get("platform")
+            or "android"
+        )
         scan_db = state.require("scan")
         self.out_dir = state.dir("analysis")
         self.db_path = self.out_dir / "analysis.db"
@@ -229,7 +234,7 @@ class Analyzer:
         effective_risk = risk or category_risk(category)
         accepted: list[CandidateFile] = []
         for item in files:
-            guard = guard_path(item.path, category, kind=item.kind, packages=self.packages, config=self.config)
+            guard = guard_path(item.path, category, kind=item.kind, packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             effective_risk = _max_risk(effective_risk, str(guard.get("risk_floor") or "SAFE"))
@@ -427,7 +432,7 @@ class Analyzer:
             if self._limit():
                 return
             path = row["path"]
-            guard = guard_path(path, "app_cache", kind="dir", packages=self.packages, config=self.config)
+            guard = guard_path(path, "app_cache", kind="dir", packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             package, label, kind = self._app_meta(path)
@@ -472,7 +477,7 @@ class Analyzer:
             if self._limit():
                 return
             path = row["path"]
-            guard = guard_path(path, "thumbnails", kind="dir", packages=self.packages, config=self.config)
+            guard = guard_path(path, "thumbnails", kind="dir", packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             inner = self._entries_under(path)
@@ -523,7 +528,7 @@ class Analyzer:
                 continue
             if self._one("SELECT 1 FROM claimed WHERE path=?", (row["path"],)):
                 continue
-            guard = guard_path(row["path"], "temp_logs", kind="file", packages=self.packages, config=self.config)
+            guard = guard_path(row["path"], "temp_logs", kind="file", packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             groups.setdefault(row["parent"], []).append(self._file_from_row(row))
@@ -532,7 +537,7 @@ class Analyzer:
                 return
             risk = "SAFE"
             for item in files:
-                guard = guard_path(item.path, "temp_logs", kind="file", packages=self.packages, config=self.config)
+                guard = guard_path(item.path, "temp_logs", kind="file", packages=self.packages, config=self.config, platform=self.platform)
                 risk = _max_risk(risk, str(guard.get("risk_floor") or "SAFE"))
             self._group_files_candidate(
                 category="temp_logs", parent=parent, files=files, risk=risk,
@@ -554,7 +559,7 @@ class Analyzer:
         threshold = int(self.config["thresholds"]["trash_old_days"])
         for row in rows:
             path = row["path"]
-            guard = guard_path(path, "trash", kind="dir", packages=self.packages, config=self.config)
+            guard = guard_path(path, "trash", kind="dir", packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             inner = self._entries_under(path)
@@ -678,7 +683,7 @@ class Analyzer:
                 continue
             paths = []
             for row in rows:
-                guard = guard_path(row["path"], "duplicates", kind="file", packages=self.packages, config=self.config)
+                guard = guard_path(row["path"], "duplicates", kind="file", packages=self.packages, config=self.config, platform=self.platform)
                 if guard.get("allowed"):
                     paths.append(row["path"])
             if len(paths) < 2:
@@ -932,7 +937,7 @@ class Analyzer:
         )
         groups: dict[str, list[sqlite3.Row]] = {}
         for row in rows:
-            guard = guard_path(row["path"], "empty_dirs", kind="dir", packages=self.packages, config=self.config)
+            guard = guard_path(row["path"], "empty_dirs", kind="dir", packages=self.packages, config=self.config, platform=self.platform)
             if not guard.get("allowed"):
                 continue
             groups.setdefault(row["parent"], []).append(row)
@@ -1047,12 +1052,19 @@ class Analyzer:
         return items
 
     def run(self) -> dict[str, Any]:
-        for generator in (
-            self.gen_residue, self.gen_thumbnails, self.gen_caches, self.gen_temp_logs,
-            self.gen_trash, self.gen_duplicates, self.gen_apks, self.gen_archives,
-            self.gen_screenshots, self.gen_ota, self.gen_downloads, self.gen_large_old,
-            self.gen_media_old, self.gen_empty_dirs, self.gen_protected,
-        ):
+        if self.platform == "harmonyos_next":
+            generators = (
+                self.gen_temp_logs, self.gen_duplicates, self.gen_apks, self.gen_archives,
+                self.gen_large_old, self.gen_empty_dirs, self.gen_protected,
+            )
+        else:
+            generators = (
+                self.gen_residue, self.gen_thumbnails, self.gen_caches, self.gen_temp_logs,
+                self.gen_trash, self.gen_duplicates, self.gen_apks, self.gen_archives,
+                self.gen_screenshots, self.gen_ota, self.gen_downloads, self.gen_large_old,
+                self.gen_media_old, self.gen_empty_dirs, self.gen_protected,
+            )
+        for generator in generators:
             try:
                 generator()
             except Exception as exc:  # noqa: BLE001
@@ -1083,6 +1095,7 @@ class Analyzer:
             "analysis_db_path": str(self.db_path),
             "analysis_hash": self._analysis_hash(),
             "device_identity": self.scan_meta.get("device_identity") or {},
+            "platform": self.platform,
             "hash_mode": self.hash_mode,
             "summary": summary,
             "items": items,

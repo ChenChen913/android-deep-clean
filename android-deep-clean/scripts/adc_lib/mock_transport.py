@@ -207,6 +207,12 @@ class MockTransport(Transport):
             abi=str(self._device_data.get("abi", "")),
             product=str(self._device_data.get("product", "")),
             fingerprint=str(self._device_data.get("fingerprint", "")),
+            platform=str(self._device_data.get("platform", "")),
+            os_version=str(self._device_data.get("os_version", "")),
+            api_version=str(self._device_data.get("api_version", "")),
+            distribution=str(self._device_data.get("distribution", "")),
+            harmony_version=str(self._device_data.get("harmony_version", "")),
+            shell=str(self._device_data.get("shell", "mock")),
         )
 
     def _load_packages(self) -> PackageIndex:

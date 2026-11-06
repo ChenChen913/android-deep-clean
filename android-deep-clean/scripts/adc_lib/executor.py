@@ -58,6 +58,7 @@ def _recompute_selection_hash(selection: dict[str, Any]) -> str:
 
 
 class Executor:
+    platform = "android"
     def __init__(self, transport: Transport, config: dict[str, Any], state: State, *, backup_dir: str | None = None) -> None:
         self.transport = transport
         self.config = config
@@ -72,6 +73,7 @@ class Executor:
         self.backup_root = self.backup_dir / self.execution_id if self.backup_dir else None
         self.backup_manifest: list[dict[str, Any]] = []
         self.backup_bytes = 0
+        self.platform = "android"
 
     def _load_packages(self):
         scan_path = self.state.require("scan", "扫描结果")
@@ -93,9 +95,12 @@ class Executor:
         return conn
 
     def _guard(self, path: str, category: str, kind: str) -> dict[str, Any]:
-        return guard_path(path, category, kind=kind, packages=self.packages, config=self.config)
+        return guard_path(
+            path, category, kind=kind, packages=self.packages, config=self.config, platform=self.platform
+        )
 
     def _preflight(self, plan: dict[str, Any], selection: dict[str, Any], token: str, mode: str, allow_permanent: bool) -> tuple[sqlite3.Connection, dict[str, list[dict[str, Any]]]]:
+        self.platform = str(plan.get("platform") or selection.get("platform") or "android")
         if not token or not hmac.compare_digest(str(token), str(selection.get("token") or "")):
             raise SafetyError("确认令牌不匹配。请使用 select 输出中的令牌，并确认用户已明确同意。")
         if plan.get("plan_hash") != selection.get("plan_hash"):
@@ -239,6 +244,7 @@ class Executor:
             "selection_hash": selection.get("selection_hash"),
             "analysis_id": plan.get("analysis_id"),
             "device_identity": current_identity,
+            "platform": self.platform,
             "transport": self.transport.name,
             "started_at": started_at,
             "finished_at": finished_at,
@@ -301,14 +307,19 @@ class Executor:
         return execution
 
     def _safe_df(self) -> dict[str, Any]:
+        path = "/storage/media/100/local/files" if self.platform == "harmonyos_next" else "/sdcard"
         try:
-            result = self.transport.df("/sdcard")
+            result = self.transport.df(path)
             return result if isinstance(result, dict) else {}
         except Exception:  # noqa: BLE001
             return {}
 
     def _quarantine_root(self) -> str:
-        external = str(self.config["quarantine"]["external_root"]).rstrip("/")
+        if self.platform == "harmonyos_next":
+            external = str(self.config["quarantine"].get("harmony_external_root")
+                           or "/storage/media/100/local/files/Docs/.android-deep-clean/quarantine").rstrip("/")
+        else:
+            external = str(self.config["quarantine"]["external_root"]).rstrip("/")
         return normalize_device_path(external + "/" + self.execution_id)
 
     def _quarantine_target(self, path: str, quarantine_root: str) -> str:
@@ -316,6 +327,11 @@ class Executor:
         if is_under(display, "/sdcard"):
             rel = display[len("/sdcard"):].lstrip("/") or "root"
             return normalize_device_path(quarantine_root + "/files/sdcard/" + rel)
+        if self.platform == "harmonyos_next":
+            for root, tag in (("/storage/media/100/local/files", "public"), ("/mnt/data/100/media_fuse/Photo", "photo")):
+                if is_under(display, root):
+                    rel = display[len(root):].lstrip("/") or "root"
+                    return normalize_device_path(quarantine_root + "/files/" + tag + "/" + rel)
         if is_under(path, "/data"):
             rel = path[len("/data"):].lstrip("/") or "root"
             internal = str(self.config["quarantine"]["internal_root"]).rstrip("/")

@@ -1,6 +1,6 @@
 # ADC CLI 契约（测试与集成用）
 
-状态：v1.0（2026-11-06）。命令参数必须写在子命令之后。
+状态：v1.2（2026-11-06）。命令参数必须写在子命令之后。
 
 ## 入口
 
@@ -8,7 +8,7 @@
 python android-deep-clean/scripts/adc.py <command> [common options] [command options]
 ```
 
-通用参数：`--state DIR`、`--transport adb|rish|local|mock`、`--serial`、`--adb-path`、`--rish-path`、`--sh-path`、`--su-command`、`--timeout`、`--root-mode auto|none|su|adb-root`、`--try-adb-root`、`--config FILE`、`--json`、`--quiet`，以及 mock 参数 `--mock-root`、`--mock-packages`、`--mock-caps`、`--mock-device`。
+通用参数：`--state DIR`、`--transport adb|hdc|rish|local|mock`、`--serial`、`--adb-path`、`--hdc-path`、`--hdc-server-port`、`--rish-path`、`--sh-path`、`--su-command`、`--timeout`、`--root-mode auto|none|su|adb-root`、`--try-adb-root`、`--config FILE`、`--json`、`--quiet`，以及 mock 参数 `--mock-root`、`--mock-packages`、`--mock-caps`、`--mock-device`。
 
 ## 命令
 

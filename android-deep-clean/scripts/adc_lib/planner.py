@@ -170,6 +170,7 @@ def build_plan(analysis: dict[str, Any], review: dict[str, Any], config: dict[st
     plan_hash = compute_plan_hash({
         "analysis_id": analysis.get("analysis_id"),
         "device_identity": device_identity,
+        "platform": analysis.get("platform") or "android",
         "items": items,
     })
     plan = {
@@ -178,6 +179,7 @@ def build_plan(analysis: dict[str, Any], review: dict[str, Any], config: dict[st
         "plan_hash": plan_hash,
         "analysis_id": analysis.get("analysis_id"),
         "device_identity": device_identity,
+        "platform": analysis.get("platform") or "android",
         "analysis_path": analysis_path,
         "analysis_db_path": analysis.get("analysis_db_path"),
         "generated_at": now_iso(),
@@ -297,6 +299,7 @@ def build_selection(plan: dict[str, Any], config: dict[str, Any], args: Any) -> 
         "plan_hash": plan.get("plan_hash"),
         "analysis_id": plan.get("analysis_id"),
         "device_identity": plan.get("device_identity") or {},
+        "platform": plan.get("platform") or "android",
         "created_at": now_iso(),
         "mode": mode,
         "token": token,

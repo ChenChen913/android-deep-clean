@@ -17,12 +17,24 @@ class DeviceInfo:
     abi: str = ""
     product: str = ""
     fingerprint: str = ""
+    platform: str = ""
+    os_version: str = ""
+    api_version: str = ""
+    distribution: str = ""
+    harmony_version: str = ""
+    shell: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @property
     def android(self) -> str:
+        if self.platform in {"harmonyos_next", "harmonyos_compat"}:
+            version = self.os_version or self.harmony_version or self.release
+            label = "HarmonyOS NEXT" if self.platform == "harmonyos_next" else "HarmonyOS"
+            if self.api_version:
+                return f"{label} {version} (API {self.api_version})".replace("  ", " ").strip()
+            return f"{label} {version}".strip()
         if self.release:
             return f"Android {self.release} (API {self.sdk})" if self.sdk else f"Android {self.release}"
         return f"API {self.sdk}" if self.sdk else "未知 Android 版本"

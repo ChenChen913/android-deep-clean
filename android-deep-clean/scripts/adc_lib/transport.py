@@ -305,6 +305,10 @@ class ShellTransport(Transport):
             sdk = int(props.get("ro.build.version.sdk", "0") or 0)
         except ValueError:
             pass
+        harmony_version = props.get("hw_sc.build.platform.version", "")
+        if not harmony_version:
+            # Some HarmonyOS ROMs keep this outside the default getprop dump.
+            harmony_version = self.getprop("hw_sc.build.platform.version")
         return DeviceInfo(
             sdk=sdk,
             release=props.get("ro.build.version.release", ""),
@@ -314,6 +318,11 @@ class ShellTransport(Transport):
             abi=props.get("ro.product.cpu.abi", ""),
             product=props.get("ro.product.name", ""),
             fingerprint=props.get("ro.build.fingerprint", ""),
+            os_version=harmony_version,
+            api_version=props.get("const.product.os.dist.apiversion", "") or props.get("const.ohos.apiversion", ""),
+            distribution=props.get("const.product.os.dist.name", ""),
+            harmony_version=harmony_version,
+            shell=self.name,
         )
 
     def list_packages(self) -> PackageIndex:
@@ -806,6 +815,16 @@ def create_transport(args: Any, config: dict[str, Any] | None = None) -> Transpo
             serial=str(getattr(args, "serial", "") or ""),
             timeout=timeout,
             su_command=su_command,
+        )
+    if name == "hdc":
+        from .hdc_transport import HdcTransport
+
+        port = getattr(args, "hdc_server_port", None)
+        return HdcTransport(
+            hdc_path=str(getattr(args, "hdc_path", "hdc") or "hdc"),
+            serial=str(getattr(args, "serial", "") or ""),
+            timeout=timeout,
+            server_port=int(port) if port else None,
         )
     if name == "rish":
         return RishTransport(

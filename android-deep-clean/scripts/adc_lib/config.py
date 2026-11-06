@@ -54,6 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "quarantine": {
         "external_root": "/sdcard/.android-deep-clean/quarantine",
         "internal_root": "/data/local/tmp/.android-deep-clean/quarantine",
+        "harmony_external_root": "/storage/media/100/local/files/Docs/.android-deep-clean/quarantine",
     },
     "safety": {
         "leftover_age_hours": 1,

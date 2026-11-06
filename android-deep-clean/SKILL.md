@@ -1,11 +1,21 @@
 ---
 name: android-deep-clean
-description: 面向 Android 手机的 AI 深度垃圾清理 Skill，支持电脑端 USB+ADB 与手机端 Termux/Shizuku 双通路，两条通路共享同一套分类、风险与安全规则。通过 ADB / Shizuku / Root / Termux 只读扫描手机存储，生成带证据的文件分类与风险报告，由 AI 逐项复核后让用户选择，最后以隔离优先的方式安全清理，并验证结果。用于用户提出“手机空间不足/清理手机垃圾/深度清理安卓/清理微信 QQ 缓存/找卸载残留/找多年以前的 APK/找重复照片视频/清理浏览器和短视频缓存/看看手机存储被什么占了/清理后复查”等需求。Use for Android storage cleanup, deep junk analysis, uninstalled-app residue, old APKs, duplicate media, WeChat/QQ/browser caches, and post-clean verification. This skill never deletes without explicit user confirmation and a valid selection token.
+description: 面向 Android 与华为 HarmonyOS 手机的 AI 深度垃圾清理 Skill，支持电脑端 USB（Android 用 ADB、HarmonyOS NEXT 用 HDC）与手机端 Termux/Shizuku 双通路，共享同一套分类、风险与安全规则。会先识别系统类型（Android / HarmonyOS 兼容版 / HarmonyOS NEXT）与真实权限，再只读扫描、生成带证据的风险报告，由 AI 逐项复核后让用户选择，最后以隔离优先的方式安全清理并验证结果。用于“手机空间不足/清理手机垃圾/深度清理安卓/清理鸿蒙/清理微信 QQ 缓存/找卸载残留/找多年以前的 APK/找重复照片视频/清理浏览器缓存/看看手机存储被什么占了/清理后复查”等需求。Use for Android or HarmonyOS storage cleanup, deep junk analysis, uninstalled-app residue, old APKs, duplicate media, WeChat/QQ/browser caches, and post-clean verification. This skill never assumes HarmonyOS NEXT supports APK, adb, Shizuku or Android paths; it never deletes without explicit user confirmation and a valid selection token.
 ---
 
-# Android Deep Clean
+# Android / HarmonyOS Deep Clean
 
-一个给 Android 手机做**深度垃圾分析与安全清理**的 Skill。它不是 adb shell rm 命令集合，而是把「扫描 → AI 证据复核 → 风险分级 → 用户选择 → 确认令牌 → 隔离执行 → 验证/复查」串成闭环。
+一个给 Android 与华为 HarmonyOS 手机做**深度垃圾分析与安全清理**的 Skill。它不是 `adb shell rm` / `hdc shell rm` 命令集合，而是把「识别系统 → 扫描 → AI 证据复核 → 风险分级 → 用户选择 → 确认令牌 → 隔离执行 → 验证/复查」串成闭环。
+
+支持的三类系统（必须检测，不得凭品牌猜测）：
+
+| 平台 | 判定依据 | 连接方式 | 能做什么 |
+|---|---|---|---|
+| Android | 有 `ro.build.version.sdk`，无鸿蒙属性 | adb / rish / local | 完整 Android 目录与缓存规则 |
+| HarmonyOS 兼容版（1.x–4.x） | 有 Android SDK，同时有 `hw_sc.build.platform.version` 等鸿蒙属性 | adb / rish / local | 沿用 Android 规则，报告中标注为 HarmonyOS 兼容版 |
+| HarmonyOS NEXT（5+） | 无 Android SDK，平台明确为 `harmonyos_next` | hdc（仅电脑端） | 仅公共目录与媒体库；不支持 APK/adb/Shizuku/Termux/跨应用沙箱 |
+
+**HarmonyOS NEXT 的边界**：不兼容 APK；没有 Android ADB Shell、Shizuku、Termux；应用沙箱默认不可读。只允许处理 `/storage/media/100/local/files` 与媒体库 `/mnt/data/<uid>/media_fuse/Photo`。官方 `bm clean -c -n <bundle>` 可清理指定应用缓存，但本版本只报告能力、不自动执行，且需真机验证。
 
 ## 核心原则
 
@@ -29,6 +39,9 @@ description: 面向 Android 手机的 AI 深度垃圾清理 Skill，支持电脑
 - 电脑端多设备必须 --serial；执行前必须确认当前设备身份与计划一致，不一致立即停止。
 - 电脑端设备断开/离线时立即停止后续破坏性操作并标记 aborted；不得重试强删。
 - 使用 --backup-to 时，备份或校验失败必须跳过该文件清理，源文件保留。
+- 禁止把 Android 的 `/sdcard`、`pm`、`Android/data` 规则套用到 HarmonyOS NEXT；必须先看 doctor 报告的 platform 与 capabilities。
+- HarmonyOS NEXT 只允许公共目录与媒体库；禁止用 `hdc shell -b` 进入应用沙箱删除数据，禁止执行 `bm clean -d`（清数据），`bm clean -c` 仅可作为待验证能力报告，不得自动执行。
+- 未在真机验证的鸿蒙能力必须在报告中标注「待验证」，不得宣称已支持。
 
 ## 两条通路（同一套清理系统）
 
@@ -36,14 +49,16 @@ description: 面向 Android 手机的 AI 深度垃圾清理 Skill，支持电脑
 
 | 通路 | 使用场景 | 设备连接 | 推荐参数 |
 |---|---|---|---|
-| A 手机端 Agent | 没有电脑；Termux 或手机内 Agent | 本机 shell / Shizuku rish | --transport local 或 --transport rish |
-| B 电脑端 Agent | Windows 11 + USB 数据线；需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
+| A 手机端 Agent（Android / 鸿蒙兼容版） | 没有电脑；Termux 或手机内 Agent | 本机 shell / Shizuku rish | --transport local 或 --transport rish |
+| A 手机端 Agent（HarmonyOS NEXT） | **当前不支持**：NEXT 不能运行 Android APK，没有 Termux/Shizuku | 无 | 只能改用电脑端 hdc |
+| B 电脑端 Agent（Android / 鸿蒙兼容版） | Windows 11 + USB 数据线；需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
+| B 电脑端 Agent（HarmonyOS NEXT） | Windows + USB；公共目录清理、电脑备份 | HDC（USB 调试 / 无线调试） | --transport hdc --serial <connect-key> --hdc-path hdc |
 
-电脑端并不是另一套清理系统：它只替换 Transport。详细步骤见 references/usb-adb-workflow.md；架构与能力边界见 references/dual-path-architecture.md。电脑端每次执行都必须绑定设备身份，禁止把 A 手机的计划用于 B 手机。
+电脑端并不是另一套清理系统：它只替换 Transport。Android 详细步骤见 references/usb-adb-workflow.md；HarmonyOS 的识别、能力边界和 hdc 流程见 references/harmonyos.md；架构与能力边界见 references/dual-path-architecture.md。电脑端每次执行都必须绑定设备身份，禁止把 A 手机的计划用于 B 手机。
 
 ## 环境与安装
 
-运行环境：Windows / macOS / Linux 上的 AI Agent（通过 USB + ADB 控制手机），或 Android 本机 Termux / Shizuku（--transport local|rish）。需要 Python 3.9+，只用标准库；电脑端只需 Android 官方 Platform Tools（含 adb.exe），不需要 Android Studio。
+运行环境：Windows / macOS / Linux 上的 AI Agent（Android 用 USB + ADB，HarmonyOS NEXT 用 USB + HDC），或 Android/鸿蒙兼容版本机 Termux / Shizuku（--transport local|rish）。需要 Python 3.9+，只用标准库；电脑端 Android 只需官方 Platform Tools（含 adb.exe），HarmonyOS NEXT 只需包含 hdc 的 HarmonyOS Command Line Tools 或 SDK toolchains，均不需要 Android Studio/DevEco Studio 全套 IDE。
 
 安装到当前 Agent Skills 目录（DeepSeek Harness / 兼容 Agent Skills 的平台）：
 
@@ -265,8 +280,10 @@ Doctor → Scan → Analyze → AI 逐项复核（residue / app_cache / chat_cac
 
 | 目的 | 命令 |
 |---|---|
-| 电脑端列设备 | adc.py devices --adb-path adb |
+| 电脑端列 Android 设备 | adc.py devices --adb-path adb |
+| 电脑端列 HarmonyOS 设备 | adc.py devices --transport hdc --hdc-path hdc |
 | 体检 | adc.py doctor --state .adc-state --transport adb --serial <序列号> |
+| 体检（HarmonyOS NEXT） | adc.py doctor --state .adc-state --transport hdc --serial <connect-key> |
 | 扫描 | adc.py scan --state .adc-state |
 | 分析 | adc.py analyze --state .adc-state --hash-mode pc |
 | 复核单个候选 | adc.py inspect --state .adc-state --id <ID> [--pull 3] [--tree] |
@@ -280,11 +297,13 @@ Doctor → Scan → Analyze → AI 逐项复核（residue / app_cache / chat_cac
 | 历史快照 | adc.py history --state .adc-state |
 | CSV 导出 | adc.py export --state .adc-state --out D:\phone-report |
 
-统一加 --transport adb|rish|local|mock；Windows 上连接手机通常用 adb。无手机时用 --transport mock 做模拟测试。
+统一加 --transport adb|hdc|rish|local|mock。Windows 连接 Android 用 adb；HarmonyOS NEXT 必须用 hdc，禁止把 adb 命令套到 NEXT。默认扫描根目录由平台决定：Android 为 /sdcard，NEXT 为 /storage/media/100/local/files 与媒体库。无手机时用 --transport mock 做模拟测试。
 
 ## 故障与降级
 
 - **ADB 未连接/未授权**：提示开启开发者选项 → USB 调试 → 手机上确认 RSA 指纹；无线调试用 adb pair + adb connect。不要继续假扫描。
+- **hdc 未连接/多设备**：先 `hdc list targets -v`；多台必须 `--serial <connect-key>`；未授权/离线时按官方 hdc 连接排查，不要改用 adb。
+- **HarmonyOS NEXT 公共目录不可读/不可写**：报告 limitations，停止扫描或执行；不要尝试 `hdc shell -b` 绕过沙箱。
 - **Android/data 不可读**：说明 scoped storage 限制；可建议 Root、Shizuku 或使用系统设置清理；不要声称已扫描应用缓存。
 - **无 Root**：跳过 /data/data 内部缓存；报告“内部数据不可读”。
 - **无 sha256sum**：重复检测降级为大小分组并明确说明不能确认完全重复；不要猜。
@@ -311,6 +330,8 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 ## 已知限制（必须对用户诚实）
 
 - 非 Root 下无法读取 /data/data；部分 ROM 的 Android/data 也不可读。
+- HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；`bm clean` 未接入执行器。
+- HarmonyOS NEXT/兼容版的 hdc/adb 真机行为尚未验证；mock 通过不等于真机通过。
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；不能把“未访问”当唯一证据。
 - 无法识别所有应用私有格式/加密缓存；未知内容一律保留。
 - 相似图片（非完全重复）需要图像内容复核，本 Skill 只做完全重复与截图/媒体候选，不自动删相似图。

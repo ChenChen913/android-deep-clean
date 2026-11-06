@@ -43,9 +43,11 @@ from .util import (
 
 _COMMON = {
     "state": "状态目录（默认 .adc-state）",
-    "transport": "adb / rish / local / mock",
-    "serial": "ADB 设备序列号",
+    "transport": "adb / hdc / rish / local / mock",
+    "serial": "设备序列号；hdc 模式下为 connect-key",
     "adb_path": "adb 可执行文件路径",
+    "hdc_path": "hdc 可执行文件路径（HarmonyOS NEXT 电脑端）",
+    "hdc_server_port": "hdc server 端口（可选，默认 8710）",
     "rish_path": "Shizuku rish 可执行文件路径",
     "sh_path": "local 模式的 shell 路径",
     "su_command": "su 命令（默认 su）",
@@ -63,9 +65,11 @@ _COMMON = {
 
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--state", default=".adc-state", help=_COMMON["state"])
-    parser.add_argument("--transport", choices=["adb", "rish", "local", "mock"], default="adb", help=_COMMON["transport"])
+    parser.add_argument("--transport", choices=["adb", "hdc", "rish", "local", "mock"], default="adb", help=_COMMON["transport"])
     parser.add_argument("--serial", default="", help=_COMMON["serial"])
     parser.add_argument("--adb-path", dest="adb_path", default="adb", help=_COMMON["adb_path"])
+    parser.add_argument("--hdc-path", dest="hdc_path", default="hdc", help=_COMMON["hdc_path"])
+    parser.add_argument("--hdc-server-port", dest="hdc_server_port", type=int, default=0, help=_COMMON["hdc_server_port"])
     parser.add_argument("--rish-path", dest="rish_path", default="rish", help=_COMMON["rish_path"])
     parser.add_argument("--sh-path", dest="sh_path", default="", help=_COMMON["sh_path"])
     parser.add_argument("--su-command", dest="su_command", default="su", help=_COMMON["su_command"])
@@ -84,7 +88,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="adc",
-        description="Android 深度清理 Skill CLI（默认只读；计划/令牌/隔离后才可能清理）",
+        description="Android / HarmonyOS 深度清理 Skill CLI（默认只读；计划/令牌/隔离后才可能清理）",
     )
     parser.add_argument("--version", action="version", version=f"android-deep-clean {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -172,7 +176,7 @@ def _config(args: Any) -> dict[str, Any]:
 
 def _transport(args: Any, config: dict[str, Any], *, configure: bool = True) -> Transport:
     transport = create_transport(args, config)
-    if transport.name == "adb":
+    if transport.name in {"adb", "hdc"}:
         transport.ensure_ready()
     if configure:
         try:
@@ -218,6 +222,28 @@ def _safe_error(message: str) -> None:
 
 
 def cmd_devices(args: Any, config: dict[str, Any]) -> int:
+    if getattr(args, "transport", "adb") == "hdc":
+        from .hdc_transport import HdcTransport
+
+        transport = HdcTransport(hdc_path=args.hdc_path or "hdc")
+        try:
+            devices = transport.list_devices()
+        except TransportError as exc:
+            print(f"ADC_ERROR: {exc}", file=sys.stderr)
+            return 4
+        if args.json:
+            print(json.dumps({"hdc_path": transport.hdc_path, "platform": "harmonyos_next", "devices": devices},
+                             ensure_ascii=False, indent=2))
+        else:
+            if not devices:
+                print("未检测到 HarmonyOS 设备。请开启开发者模式/USB 调试，并执行 hdc list targets。")
+            else:
+                print(f"HDC：{transport.hdc_path}")
+                print("connect-key\t状态\t详情")
+                for item in devices:
+                    print(f"{item['serial']}\t{item['state']}\t{item.get('details', '')}")
+            print("\n提示：多台设备必须用 --serial 指定 connect-key。")
+        return 0
     transport = AdbTransport(adb_path=args.adb_path or "adb")
     try:
         devices = transport.list_devices()

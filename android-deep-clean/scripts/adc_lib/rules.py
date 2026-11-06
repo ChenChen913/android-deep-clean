@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from .models import PackageIndex
+from .platform import HARMONY_NEXT, HARMONY_PHOTO_ROOT, HARMONY_PUBLIC_ROOT, normalize_platform
 from .util import RISK_ORDER, ext_of, is_under, normalize_device_path, risk_max
 
 # ---------------------------------------------------------------- categories
@@ -406,6 +407,53 @@ def _guard_internal_data(path: str, category: str, packages: PackageIndex | None
     return False, "应用数据库/配置/文件区受硬保护", "DANGEROUS"
 
 
+def _guard_harmony_next(
+    path: str,
+    category: str,
+    *,
+    kind: str = "file",
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Conservative guard for HarmonyOS NEXT public storage only.
+
+    Only the documented public directory and the media library are eligible.
+    App sandboxes, system partitions and /data are always blocked.
+    """
+    if not category_risk_allowed(category):
+        return {"allowed": False, "hard_block": True, "reason": f"未知清理类别：{category}", "risk_floor": "DANGEROUS"}
+    roots = (HARMONY_PUBLIC_ROOT, HARMONY_PHOTO_ROOT)
+    matched = next((root for root in roots if path == root or is_under(path, root)), "")
+    if not matched:
+        return {
+            "allowed": False,
+            "hard_block": True,
+            "reason": "HarmonyOS NEXT 仅允许处理公共目录；应用沙箱与系统目录受硬保护",
+            "risk_floor": "DANGEROUS",
+        }
+    if path == matched:
+        return {"allowed": False, "hard_block": False, "reason": "公共目录本身不允许删除", "risk_floor": "DANGEROUS"}
+    relative = path[len(matched):].lstrip("/")
+    name = posixpath.basename(path)
+    if is_protected_filename(name):
+        return {"allowed": False, "hard_block": True, "reason": "数据库/密钥/.nomedia 等敏感文件受保护", "risk_floor": "DANGEROUS"}
+    if any(part.lower() in PROTECTED_DIR_NAMES for part in relative.split("/") if part):
+        return {"allowed": False, "hard_block": True, "reason": "应用数据库/配置目录受保护", "risk_floor": "DANGEROUS"}
+    if category == "empty_dirs":
+        if kind != "dir":
+            return {"allowed": False, "hard_block": False, "reason": "空目录清理只接受目录", "risk_floor": "DANGEROUS"}
+        if path.count("/") < 7:
+            return {"allowed": False, "hard_block": False, "reason": "公共目录顶层不参与空目录清理", "risk_floor": "DANGEROUS"}
+    if isinstance(config, dict):
+        for prefix in config.get("extra_protected_paths") or []:
+            try:
+                if is_under(path, normalize_device_path(str(prefix))):
+                    return {"allowed": False, "hard_block": True, "reason": f"用户配置的额外保护路径：{prefix}", "risk_floor": "DANGEROUS"}
+            except Exception:  # noqa: BLE001
+                continue
+    # Everything in public storage is user-visible data: never SAFE by default.
+    return {"allowed": True, "hard_block": False, "reason": "", "risk_floor": risk_max("CAUTION", category_risk(category))}
+
+
 def guard_path(
     path: str,
     category: str,
@@ -413,6 +461,7 @@ def guard_path(
     kind: str = "file",
     packages: PackageIndex | None = None,
     config: dict[str, Any] | None = None,
+    platform: str = "android",
 ) -> dict[str, Any]:
     """Evaluate a candidate path for a category.
 
@@ -423,6 +472,9 @@ def guard_path(
         path = normalize_device_path(path)
     except Exception as exc:  # noqa: BLE001 - fail closed
         return {"allowed": False, "hard_block": True, "reason": f"路径非法：{exc}", "risk_floor": "DANGEROUS"}
+
+    if normalize_platform(platform) == HARMONY_NEXT:
+        return _guard_harmony_next(path, category, kind=kind, config=config)
 
     hard, hard_reason = _hard_block(path)
     if hard:

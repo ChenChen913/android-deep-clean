@@ -6,6 +6,29 @@
 - 写作用域：本报告与 tests/ 下的测试代码；未修改 android-deep-clean/ 产品代码
 - 任务：共享任务 task-3（v1.0 基线）、task-4（v1.1 双通路扩展）
 
+## v1.2.0 HarmonyOS 适配复测（2026-11-06）
+
+> 本轮只做平台识别、路径守卫与 mock 全链路验证；没有真实 HarmonyOS 设备，所有 hdc 真机能力均标记为待验证。
+
+| 指标 | 结果 |
+|---|---|
+| 收集用例 | 186（v1.1.2 基线 183 + 本轮 3） |
+| 通过 | 184 |
+| 跳过 | 2（Windows 符号链接环境限制） |
+| 产物版本 | android-deep-clean 1.2.0 |
+| 新增覆盖 | 三平台识别；HarmonyOS NEXT 公共目录守卫；NEXT 全链路 mock |
+| 未验证 | HarmonyOS NEXT/兼容版真机 hdc/adb、公共目录可写性、toybox 差异、`bm clean` 实际行为 |
+
+HarmonyOS NEXT mock 全链路结果：
+
+- doctor：`platform=harmonyos_next`，`public_read=true`，`android_data_read=false`，`supports_shizuku/termux=false`，`supports_bm_clean=true`。
+- scan：只扫描 `/storage/media/100/local/files`；媒体库不存在时跳过并写入 limitations。
+- analyze：旧压缩包、旧 APK、临时日志、重复文件、空目录进入候选；`secret.db`、`.nomedia`、`/data/app` 沙箱文件均未进入清单。
+- plan/select/execute/verify/restore：隔离区位于公共目录 Docs 下，执行成功、验证失败 0、恢复成功。
+- 回归：Android 既有用例全部通过，未出现分类或哈希回归。
+
+**结论**：架构与 mock 验证通过；真实 HarmonyOS NEXT 设备上必须重新执行 doctor 与只读 scan，确认 hdc、公共目录和 toybox 能力后，才能宣称可用。
+
 ## v1.1.2 模拟真机全链路复测（2026-11-06）
 
 > 本轮不连接真实手机，使用 mock transport 在临时目录模拟两种 ROM，覆盖完整清理闭环。

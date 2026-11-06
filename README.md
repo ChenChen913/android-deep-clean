@@ -1,8 +1,10 @@
-# Android Deep Clean（Android 深度清理 Skill）
+# Android / HarmonyOS Deep Clean（手机深度清理 Skill）
 
-面向 Android 手机的 AI Agent 深度清理技能：只读扫描 → 证据分析 → AI 复核 → 用户选择 → 确认令牌 → 隔离清理 → 验证/复查。
+面向 Android 与华为 HarmonyOS 手机的 AI Agent 深度清理技能：只读扫描 → 证据分析 → AI 复核 → 用户选择 → 确认令牌 → 隔离清理 → 验证/复查。
 
-支持**双通路**：手机端 Agent（Termux / Shizuku）与 Windows 电脑端 Agent（USB + ADB），共用同一套分类规则、风险分级、保护清单、确认机制、执行日志与验证标准。
+支持**双通路**：手机端 Agent（Android/鸿蒙兼容版：Termux / Shizuku）与 Windows 电脑端 Agent（Android 用 USB + ADB，HarmonyOS NEXT 用 USB + HDC），共用同一套分类规则、风险分级、保护清单、确认机制、执行日志与验证标准。
+
+HarmonyOS 会先识别系统类型再决定能力：兼容版沿用 Android 规则；NEXT 只处理公共目录与媒体库，明确不支持 APK、adb、Shizuku、Termux 和跨应用沙箱。完整矩阵见 [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)。
 
 核心不是“删得快”，而是：**发现长期积累、隐藏较深、普通清理工具忽略的无用文件，同时绝不误删用户重要数据。**
 
@@ -10,12 +12,16 @@
 
 | 通路 | 场景 | 连接方式 | 关键参数 |
 |---|---|---|---|
-| A 手机端 | 没有电脑，手机上的 Agent | Termux 本机 / Shizuku rish | --transport local / rish |
-| B 电脑端 | Windows 11 + USB 数据线，需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
+| A 手机端（Android / 鸿蒙兼容版） | 没有电脑，手机上的 Agent | Termux 本机 / Shizuku rish | --transport local / rish |
+| A 手机端（HarmonyOS NEXT） | 当前不支持 | 无 Android APK / Termux / Shizuku | 使用电脑端 hdc |
+| B 电脑端（Android / 鸿蒙兼容版） | Windows 11 + USB 数据线，需要电脑备份/本地哈希/CSV | ADB（USB 调试） | --transport adb --serial <序列号> |
+| B 电脑端（HarmonyOS NEXT） | Windows + USB，公共目录清理与电脑备份 | HDC（USB / 无线调试） | --transport hdc --serial <connect-key> |
 
-两条通路调用同一个 CLI、同一套 adc_lib 规则与同一状态机；电脑端只是在 Transport 层通过 adb shell 执行。详细说明：
+两条通路调用同一个 CLI、同一套 adc_lib 规则与同一状态机；电脑端只是在 Transport 层通过 adb/hdc 执行。详细说明：
 
 - [电脑端 USB+ADB 工作流](android-deep-clean/references/usb-adb-workflow.md)
+- [HarmonyOS Agent 参考](android-deep-clean/references/harmonyos.md)
+- [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)
 - [双通路架构与能力边界](android-deep-clean/references/dual-path-architecture.md)
 
 ## 电脑端快速开始（Windows 11）
@@ -82,6 +88,24 @@ Shizuku 环境用 --transport rish --rish-path rish。其余流程和电脑端�
 - **历史扫描**：scan 自动归档上一轮快照到 history/scan-*；history 查看。
 - **前后对比**：execution/verify 记录逻辑处理量、隔离量、实际释放与可用空间变化。
 
+## HarmonyOS 快速开始
+
+HarmonyOS 兼容版（1.x–4.x）继续用上面的 adb 流程。HarmonyOS NEXT 需要 hdc：
+
+~~~powershell
+# 1) 确认 hdc（来自 HarmonyOS Command Line Tools / SDK toolchains，不需要完整 IDE）
+hdc list targets -v
+
+# 2) 识别平台与权限（报告里看 platform / capabilities / limitations）
+python "$Skill\scripts\adc.py" doctor --state $State --transport hdc --serial <connect-key>
+
+# 3) 只读扫描公共目录与媒体库
+python "$Skill\scripts\adc.py" scan    --state $State --transport hdc --serial <connect-key>
+python "$Skill\scripts\adc.py" analyze --state $State --transport hdc --serial <connect-key>
+~~~
+
+NEXT 只处理 `/storage/media/100/local/files` 与媒体库；应用私有缓存逐文件扫描、卸载残留、手机端 Agent 都不支持。`bm clean -c` 仅报告能力，不自动执行。详见 [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)。
+
 ## 安全设计（摘要）
 
 - 扫描/分析全程只读；execute 前需要 select 生成的确认令牌。
@@ -99,9 +123,9 @@ Shizuku 环境用 --transport rish --rish-path rish。其余流程和电脑端�
 | android-deep-clean/SKILL.md | 技能主说明（平台 Skill 入口） |
 | android-deep-clean/scripts/adc.py | CLI 入口 |
 | android-deep-clean/scripts/adc_lib/ | transport / scan / rules / analyze / plan / execute / verify / export |
-| android-deep-clean/references/ | 安全策略、权限矩阵、路径规则、复核指南、USB+ADB 工作流、双通路架构 |
-| tests/ | pytest 模拟 Android 设备测试套件 |
-| docs/ | 安装使用、权限兼容、测试报告、研究、限制、CHANGELOG |
+| android-deep-clean/references/ | 安全策略、权限矩阵、路径规则、复核指南、USB+ADB 工作流、HarmonyOS 适配、双通路架构 |
+| tests/ | pytest 模拟 Android 与 HarmonyOS NEXT 设备测试套件 |
+| docs/ | 安装使用、权限兼容、HarmonyOS 兼容性、测试报告、研究、限制、CHANGELOG |
 
 ## 测试
 
@@ -109,12 +133,13 @@ Shizuku 环境用 --transport rish --rish-path rish。其余流程和电脑端�
 python -m pytest tests -q
 ~~~
 
-测试不需要手机：使用 mock transport 和临时设备树。当前全量结果：181 passed / 2 skipped / 0 failed（183 collected）。2 条 skip 为 Windows 真实符号链接权限限制；电脑端 ADB 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
+测试不需要手机：使用 mock transport 和临时设备树（Android 与 HarmonyOS NEXT 两套平台画像）。当前全量结果：184 passed / 2 skipped / 0 failed（186 collected）。2 条 skip 为 Windows 真实符号链接权限限制；电脑端 ADB 与 hdc 的真实连接仍需真机冒烟，见 docs/test-report.md 的“未覆盖/需真机”章节。
 
 ## 文档
 
 - [安装与使用](docs/install-and-usage.md)
 - [权限与兼容性](docs/permissions-and-compatibility.md)
+- [HarmonyOS 支持与兼容性](docs/harmonyos-support.md)
 - [测试报告](docs/test-report.md)
 - [限制与路线图](docs/limitations-and-roadmap.md)
 - [Android 存储研究](docs/research-android-storage.md)

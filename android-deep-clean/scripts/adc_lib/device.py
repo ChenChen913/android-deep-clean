@@ -5,6 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from .models import AccessProbe, DeviceInfo, PackageIndex
+from .platform import (
+    ANDROID,
+    HARMONY_COMPAT,
+    HARMONY_NEXT,
+    HARMONY_PHOTO_ROOT,
+    HARMONY_PUBLIC_ROOT,
+    HARMONY_TMP_ROOT,
+    detect_platform,
+    platform_identity_extra,
+    profile_for,
+)
 from .transport import Transport, TransportError
 from .util import human_bytes, now_iso, sha256_text, stable_id
 
@@ -32,9 +43,11 @@ def device_identity(info: DeviceInfo) -> dict[str, Any]:
     """
     serial = str(info.serial or "").strip() or "unknown"
     fingerprint = str(info.fingerprint or "").strip()
-    material = "|".join(
-        [serial, fingerprint, str(info.manufacturer or ""), str(info.model or ""), str(info.sdk or 0)]
-    )
+    platform = str(getattr(info, "platform", "") or ANDROID)
+    material_parts = [serial, fingerprint, str(info.manufacturer or ""), str(info.model or ""), str(info.sdk or 0)]
+    if platform != ANDROID:
+        material_parts += [platform, str(getattr(info, "os_version", "") or ""), str(getattr(info, "api_version", "") or "")]
+    material = "|".join(material_parts)
     return {
         "id": stable_id("device", material),
         "serial": serial,
@@ -44,6 +57,10 @@ def device_identity(info: DeviceInfo) -> dict[str, Any]:
         "release": info.release,
         "fingerprint": fingerprint,
         "android": info.android,
+        "platform": platform,
+        "os_version": getattr(info, "os_version", ""),
+        "api_version": getattr(info, "api_version", ""),
+        "distribution": getattr(info, "distribution", ""),
         "hash_material_sha256": sha256_text(material),
     }
 
@@ -67,18 +84,18 @@ class Doctor:
         if rc != 0:
             detail = (err or out).strip()[:300]
             raise TransportError(
-                "无法连接 Android 设备或执行 adb shell。请检查 USB 调试/无线调试授权。"
+                "无法连接设备或执行 shell 命令。请检查 USB 调试/无线调试授权。"
                 + (f" 详情：{detail}" if detail else "")
             )
 
-    def _probe_commands(self) -> dict[str, bool]:
+    def _probe_commands(self, names: tuple[str, ...] | list[str] = PROBE_COMMANDS) -> dict[str, bool]:
         if self.transport.name == "mock":
             commands = getattr(self.transport, "caps", {}).get("commands")
             if isinstance(commands, dict):
-                return {name: bool(commands.get(name, True)) for name in PROBE_COMMANDS}
-            return {name: True for name in PROBE_COMMANDS}
+                return {name: bool(commands.get(name, True)) for name in names}
+            return {name: True for name in names}
         result: dict[str, bool] = {}
-        for command in PROBE_COMMANDS:
+        for command in names:
             try:
                 rc, out, _ = self.transport.shell_rc(
                     f"command -v {command} >/dev/null 2>&1; echo $?", timeout=20
@@ -102,12 +119,15 @@ class Doctor:
             privilege = getattr(self.transport, "privilege", "shell")
 
         device = self.transport.device_info()
+        platform = detect_platform(device)
+        device.platform = platform
+        profile = profile_for(platform)
         identity = device_identity(device)
-        commands = self._probe_commands()
+        commands = self._probe_commands(profile.command_probes)
         packages = self.transport.list_packages()
-        probes = {path: self.transport.access(path).to_dict() for path in PROBE_PATHS}
+        probes = {path: self.transport.access(path).to_dict() for path in profile.probe_paths}
         storage = []
-        for path in ("/sdcard", "/data"):
+        for path in list(profile.default_roots) + ["/data"]:
             try:
                 info = self.transport.df(path)
             except TransportError as exc:
@@ -119,85 +139,144 @@ class Doctor:
             probe = probes.get(path) or {}
             return bool(probe.get("readable") and probe.get("listable"))
 
-        sdcard = can_read("/sdcard")
-        android_data = can_read("/sdcard/Android/data")
-        android_obb = can_read("/sdcard/Android/obb")
-        internal = can_read("/data/data") if privilege in {"root", "su"} else False
-        can_write_sdcard = bool((probes.get("/sdcard") or {}).get("writable"))
-        can_quarantine = can_write_sdcard or (privilege in {"root", "su"} and internal)
-        pm_ok = bool(packages.available and commands.get("pm", True))
-        hash_ok = bool(commands.get("sha256sum") or commands.get("md5sum"))
-
-        if privilege in {"root", "su"}:
-            tier = "full"
-        elif sdcard and android_data:
-            tier = "standard"
-        elif sdcard:
-            tier = "limited"
+        if platform == HARMONY_NEXT:
+            public = can_read(HARMONY_PUBLIC_ROOT)
+            docs = can_read(HARMONY_PUBLIC_ROOT + "/Docs")
+            photo = can_read(HARMONY_PHOTO_ROOT)
+            tmp = can_read(HARMONY_TMP_ROOT)
+            can_write_public = bool((probes.get(HARMONY_PUBLIC_ROOT) or {}).get("writable"))
+            hash_ok = bool(commands.get("sha256sum") or commands.get("md5sum"))
+            tier = "limited" if public else "blocked"
+            limitations: list[str] = []
+            if not public:
+                limitations.append("无法读取 /storage/media/100/local/files：HarmonyOS NEXT 公共目录不可读，不能执行有意义扫描。")
+            if not docs:
+                limitations.append("无法读取公共目录下的 Docs/Download：下载目录清理不可用。")
+            if not photo:
+                limitations.append("无法读取媒体库 /mnt/data/100/media_fuse/Photo（需要 API 22+ 或系统允许）。")
+            if not tmp:
+                limitations.append("无法读取 /data/local/tmp：临时区清理不可用。")
+            if not hash_ok:
+                limitations.append("设备缺少 sha256sum/md5sum：重复文件只能按大小分组。")
+            if not can_write_public:
+                limitations.append("公共目录不可写：隔离区无法创建，执行阶段会被拒绝。")
+            if not (commands.get("find") and commands.get("stat") and commands.get("xargs")):
+                limitations.append("设备缺少 find/stat/xargs：扫描能力受限。")
+            limitations.append("HarmonyOS NEXT 不支持 Android APK / adb / Shizuku / Termux；应用私有缓存无法按文件扫描。")
+            limitations.append("应用缓存可尝试官方 bm clean -c -n <bundle>（需开发者模式），本版本不自动执行，需真机验证。")
+            if self.transport.name == "mock":
+                limitations.append("当前为 mock 模拟设备，结果仅用于测试，不代表任何真实手机。")
+            recommended_roots = [root for root in profile.default_roots if can_read(root)]
+            capabilities = {
+                "privilege": "shell",
+                "tier": tier,
+                "tier_label": {"limited": "受限（仅 HarmonyOS 公共目录）", "blocked": "不可用"}.get(tier, tier),
+                "platform": platform,
+                "sdcard_read": public,
+                "sdcard_write": can_write_public,
+                "android_data_read": False,
+                "android_obb_read": False,
+                "internal_data_read": False,
+                "package_manager": bool(packages.available and commands.get("bm")),
+                "hashing": hash_ok,
+                "quarantine_usable": can_write_public,
+                "public_read": public,
+                "public_write": can_write_public,
+                "docs_read": docs,
+                "photo_read": photo,
+                "tmp_read": tmp,
+                "commands": commands,
+            }
+            capabilities.update({key: value for key, value in platform_identity_extra(platform).items()
+                                 if key not in capabilities})
         else:
-            tier = "blocked"
+            sdcard = can_read("/sdcard")
+            android_data = can_read("/sdcard/Android/data")
+            android_obb = can_read("/sdcard/Android/obb")
+            internal = can_read("/data/data") if privilege in {"root", "su"} else False
+            can_write_sdcard = bool((probes.get("/sdcard") or {}).get("writable"))
+            can_quarantine = can_write_sdcard or (privilege in {"root", "su"} and internal)
+            pm_ok = bool(packages.available and commands.get("pm", True))
+            hash_ok = bool(commands.get("sha256sum") or commands.get("md5sum"))
 
-        limitations: list[str] = []
-        if not sdcard:
-            limitations.append("无法读取 /sdcard，Skill 不能执行有意义的扫描。请先在手机上授权 USB 调试。")
-        if not android_data:
-            limitations.append(
-                "无法读取 /sdcard/Android/data：该目录在当前权限级别下受限制。"
-                "将无法发现应用外部缓存与卸载残留；请使用 Root/Shizuku 或手动授权。"
-            )
-        if not android_obb:
-            limitations.append("无法读取 /sdcard/Android/obb：OBB 残留无法发现。")
-        if not pm_ok:
-            limitations.append("无法执行 pm list packages：无法可靠判断应用是否已卸载，卸载残留检测会被跳过。")
-        if not internal:
-            limitations.append("无法读取 /data/data：应用内部 cache 与内部残留无法扫描（通常需要 Root）。")
-        if not hash_ok:
-            limitations.append("设备缺少 sha256sum/md5sum：重复文件只能按大小分组，无法确认完全重复。")
-        if not can_write_sdcard:
-            limitations.append("当前会话没有 /sdcard 写权限：无法把文件移入隔离区，执行阶段会被拒绝。")
-        if not commands.get("find") or not commands.get("stat") or not commands.get("xargs"):
-            limitations.append("设备缺少 find/stat/xargs：扫描能力受限。")
-        if device.sdk and device.sdk >= 30:
-            limitations.append(
-                "Android 11+ 启用 scoped storage。ADB shell 能否访问 Android/data 取决于 ROM/版本，"
-                "本报告只依据实际探测结果，不假定一定有权限。"
-            )
-        if privilege_error:
-            limitations.append(f"提权失败：{privilege_error}")
-        if self.transport.name == "mock":
-            limitations.append("当前为 mock 模拟设备，结果仅用于测试，不代表任何真实手机。")
+            if privilege in {"root", "su"}:
+                tier = "full"
+            elif sdcard and android_data:
+                tier = "standard"
+            elif sdcard:
+                tier = "limited"
+            else:
+                tier = "blocked"
 
-        recommended_roots = ["/sdcard"] if sdcard else []
-        if internal:
-            recommended_roots.append("internal-cache")
+            limitations: list[str] = []
+            if not sdcard:
+                limitations.append("无法读取 /sdcard，Skill 不能执行有意义的扫描。请先在手机上授权 USB 调试。")
+            if not android_data:
+                limitations.append(
+                    "无法读取 /sdcard/Android/data：该目录在当前权限级别下受限制。"
+                    "将无法发现应用外部缓存与卸载残留；请使用 Root/Shizuku 或手动授权。"
+                )
+            if not android_obb:
+                limitations.append("无法读取 /sdcard/Android/obb：OBB 残留无法发现。")
+            if not pm_ok:
+                limitations.append("无法执行 pm list packages：无法可靠判断应用是否已卸载，卸载残留检测会被跳过。")
+            if not internal:
+                limitations.append("无法读取 /data/data：应用内部 cache 与内部残留无法扫描（通常需要 Root）。")
+            if not hash_ok:
+                limitations.append("设备缺少 sha256sum/md5sum：重复文件只能按大小分组，无法确认完全重复。")
+            if not can_write_sdcard:
+                limitations.append("当前会话没有 /sdcard 写权限：无法把文件移入隔离区，执行阶段会被拒绝。")
+            if not commands.get("find") or not commands.get("stat") or not commands.get("xargs"):
+                limitations.append("设备缺少 find/stat/xargs：扫描能力受限。")
+            if device.sdk and device.sdk >= 30:
+                limitations.append(
+                    "Android 11+ 启用 scoped storage。ADB shell 能否访问 Android/data 取决于 ROM/版本，"
+                    "本报告只依据实际探测结果，不假定一定有权限。"
+                )
+            if privilege_error:
+                limitations.append(f"提权失败：{privilege_error}")
+            if platform == HARMONY_COMPAT:
+                limitations.append("检测到 HarmonyOS 兼容版：沿用 Android 目录与 adb 通路，扫描规则与 Android 相同。")
+            if self.transport.name == "mock":
+                limitations.append("当前为 mock 模拟设备，结果仅用于测试，不代表任何真实手机。")
 
-        capabilities = {
-            "privilege": privilege,
-            "tier": tier,
-            "tier_label": {
-                "full": "完整（Root/SU）",
-                "standard": "标准（可读 Android/data）",
-                "limited": "受限（仅共享存储）",
-                "blocked": "不可用",
-            }.get(tier, tier),
-            "sdcard_read": sdcard,
-            "sdcard_write": can_write_sdcard,
-            "android_data_read": android_data,
-            "android_obb_read": android_obb,
-            "internal_data_read": internal,
-            "package_manager": pm_ok,
-            "hashing": hash_ok,
-            "quarantine_usable": can_quarantine,
-            "commands": commands,
-        }
+            recommended_roots = ["/sdcard"] if sdcard else []
+            if internal:
+                recommended_roots.append("internal-cache")
+
+            capabilities = {
+                "privilege": privilege,
+                "tier": tier,
+                "tier_label": {
+                    "full": "完整（Root/SU）",
+                    "standard": "标准（可读 Android/data）",
+                    "limited": "受限（仅共享存储）",
+                    "blocked": "不可用",
+                }.get(tier, tier),
+                "platform": platform,
+                "sdcard_read": sdcard,
+                "sdcard_write": can_write_sdcard,
+                "android_data_read": android_data,
+                "android_obb_read": android_obb,
+                "internal_data_read": internal,
+                "package_manager": pm_ok,
+                "hashing": hash_ok,
+                "quarantine_usable": can_quarantine,
+                "commands": commands,
+            }
+            capabilities.update({key: value for key, value in platform_identity_extra(platform).items()
+                                 if key not in capabilities})
 
         return {
             "schema": 1,
             "generated_at": now_iso(),
             "transport": self.transport.name,
+            "platform": platform,
+            "platform_label": profile.label,
             "transport_detail": {
                 "serial": getattr(self.transport, "serial", ""),
                 "adb_path": getattr(self.transport, "adb_path", ""),
+                "hdc_path": getattr(self.transport, "hdc_path", ""),
                 "rish_path": getattr(self.transport, "rish_path", ""),
             },
             "device": device.to_dict(),
@@ -215,6 +294,7 @@ class Doctor:
             "storage": storage,
             "probes": probes,
             "limitations": limitations,
+            "unsupported_features": list(profile.notes) if platform == HARMONY_NEXT else [],
             "recommended_roots": recommended_roots,
             "warnings": self.warnings,
             "note": "doctor 全程只读；未创建目录、未写入设备。",
@@ -224,13 +304,14 @@ class Doctor:
 def doctor_markdown(report: dict[str, Any]) -> str:
     caps = report.get("capabilities") or {}
     lines = [
-        "# Android 存储体检报告",
+        f"# {report.get('platform_label') or 'Android'} 存储体检报告",
         "",
         f"- 生成时间：{report.get('generated_at')}",
         f"- 传输方式：{report.get('transport')}",
         f"- 设备：{((report.get('device') or {}).get('manufacturer') or '')} {((report.get('device') or {}).get('model') or '')}".strip(),
         f"- 设备身份：{(report.get('device_identity') or {}).get('id', '-')}（序列号：{(report.get('device_identity') or {}).get('serial', '-')}）",
         f"- 系统：{report.get('android')}",
+        f"- 平台：{report.get('platform_label') or report.get('platform') or '-'}",
         f"- 权限级别：{caps.get('tier_label')}（{caps.get('privilege')}）",
         f"- 应用包：已安装 {((report.get('packages') or {}).get('installed_count'))}，未安装包记录 {((report.get('packages') or {}).get('uninstalled_count'))}",
         "",

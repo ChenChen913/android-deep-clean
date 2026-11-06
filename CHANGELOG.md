@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.2.0 — HarmonyOS 适配（兼容版 + NEXT）
+
+### Added
+- 平台画像与系统识别：`android` / `harmonyos_compat` / `harmonyos_next`，依据 Android SDK、`hw_sc.build.platform.version`、`const.product.os.dist.*` 等属性判定，不按品牌猜测。
+- hdc 传输层：`devices --transport hdc`、`doctor/scan/analyze/... --transport hdc`，支持 `hdc list targets`、`hdc shell`、`hdc file recv`、多设备 `-t connect-key`。
+- HarmonyOS NEXT 公共目录适配：默认扫描 `/storage/media/100/local/files` 与媒体库 `/mnt/data/100/media_fuse/Photo`；隔离区放在公共目录 Docs 下。
+- HarmonyOS NEXT 路径守卫：仅公共目录/媒体库可处理，应用沙箱、`/data`、系统目录全部硬阻断。
+- 规则降级：NEXT 只运行重复文件、旧 APK/压缩包、临时日志、大文件、空目录、受保护项分析；不运行应用缓存、卸载残留、聊天缓存、截图/媒体等 Android 路径规则。
+- 报告增加 `platform`、`platform_label`、`supported/unsupported` 能力与 limitations。
+- 新增 references/harmonyos.md、docs/harmonyos-support.md 与 HarmonyOS mock 全链路测试。
+
+### Changed
+- `plan_hash` / `selection_hash` 覆盖 `platform`；旧计划需要重新 analyze 和 plan。
+- 执行报告与验证报告记录平台；HarmonyOS NEXT 的隔离目标按公共目录映射。
+- 版本号升级到 1.2.0。
+
+### Known limits（明确未支持/未验证）
+- HarmonyOS NEXT 不支持 Android APK、adb、Shizuku、Termux；手机端 Agent 不提供。
+- NEXT 应用私有缓存逐文件扫描不可行；`bm clean -c -n` 仅报告能力，未接入执行器。
+- HarmonyOS NEXT 与兼容版的 hdc/adb 行为均未在真实设备验证；mock 通过不等于真机通过。
+
 ## v1.1.2 — 证据数字与真实清单对齐
 
 ### Fixed
