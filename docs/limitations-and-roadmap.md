@@ -40,6 +40,7 @@
 - MediaStore 索引可能延迟刷新、缺少路径或标记 pending/trashed；这些差异只作为证据，不能认定文件已删除或可删除。
 - MediaStore 查询依赖 shell 权限与 OEM 实现，Android 10/11/12+ 的字段和可用性不同；已在 1 台 HarmonyOS 3.0 兼容版 / Android 10 验证（图片/视频/音频可用，`downloads` 不可用），其他 OEM/版本仍需验证。
 - v1.4.0 起 MediaStore 作为辅助索引只读采集，用于交叉验证；文件系统扫描仍是主通道。媒体索引不覆盖未索引文件、应用私有媒体、未挂载卷/其他用户；已在 1 台真机验证，其他机型仍需验证。
+- v1.5.0 起增加应用级存储（部分口径）：基础 APK + 外部 data/media/obb；应用内部 data/cache 与 split APK 未计入。未使用 `dumpsys diskstats`（会写系统缓存），也未开发辅助 APK；因此不能给出完整的应用总占用。
 
 ### 分析
 - 相似图片（非完全重复）不自动识别；只做完全重复、截图/媒体候选，AI 预览后仍需用户确认。
@@ -65,7 +66,7 @@
 ## 2. 后续改进方向
 
 1. **真机兼容性测试矩阵**：多 OEM、多 Android 版本、USB/无线/Shizuku/root；用真实设备补齐 doctor 探测与 toybox 差异。
-2. **设备端 helper**：MediaStore 已完成只读索引接入；下一步评估 StorageStatsManager 应用级存储统计与轻量辅助 APK，提高无电脑场景能力。
+2. **设备端 helper**：MediaStore 与基础应用级统计已接入；若确实需要完整应用内部 data/cache，下一步再评估带 `PACKAGE_USAGE_STATS` 授权的轻量辅助 APK，并明确权限与维护成本。
 3. **感知哈希相似图片**：在用户设备/本机可选计算 dHash/pHash，AI 预览 + 人工确认；不引入重依赖。
 4. **聊天应用版本适配**：可配置的路径知识库（微信/QQ/抖音版本差异），更新时不改核心代码。
 5. **整目录隔离优化**：对 SAFE cache 目录支持原子 move 整个目录（带 mtime/内容清单校验），减少逐文件开销。

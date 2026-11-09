@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.4.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.5.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -395,6 +395,28 @@ The media index is evidence only. It never creates candidates, changes risk or s
 
 Verified on HONOR HLK-AL00 (HarmonyOS 3.0 compat / Android 10 / SDK 29): 4,965 index rows / 7.35 GB; 4,964 matched, 8 differed only by path case, 1 was out of scan scope, 0 in-scope missing, 99.98% match. The `downloads` collection is unavailable on this ROM and degrades to partial. No files were modified.
 
+### App-level storage (partial)
+
+Since v1.5.0, `scan` reads the base APK size of installed packages:
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-app-storage
+```
+
+It runs `pm list packages -f` and batched `stat`, writes `scan/aux/app-storage.json`, and does not read file contents or require root.
+
+`analyze` adds `summary.app_storage` and an "App-level storage (partial)" report section:
+
+- Known: base APK, external `Android/data` / `Android/media` / `Android/obb`, external cache.
+- Unknown: app-internal data/cache, split APKs.
+- Lists top apps by external storage and uninstalled packages that still have external directories.
+- App-related candidates gain package-level evidence only; risk and selectability do not change.
+
+**Why it is partial**: a plain ADB shell lacks StorageStatsManager permissions for other apps' internal data. `dumpsys diskstats` writes a system cache file, so it is not used because scans must stay read-only. A helper APK would need extra grants and long-term maintenance, so it is not included. The known total is not the app's total footprint and must not be added to device-used space.
+
+Real-device result (HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. Internal data/cache were not read; no files were modified.
+
 ### Command reference
 
 | Command | Purpose | Modifies the phone |
@@ -492,6 +514,10 @@ Key default thresholds (source: `scripts/adc_lib/config.py`):
 | `media_store.collections` | four collections | `images/video/audio/downloads` |
 | `media_store.timeout_seconds` | 60 | Per-collection query timeout |
 | `media_store.max_items` | 200000 | Index row cap; marks the result truncated |
+| `app_storage.enabled` | `true` | Collect base APK sizes |
+| `app_storage.timeout_seconds` | 30 | Per-batch `stat` timeout |
+| `app_storage.max_packages` | 1000 | Maximum packages collected |
+| `app_storage.top_apps` | 15 | Apps shown in the report |
 
 ## Project structure
 
@@ -502,7 +528,7 @@ Key default thresholds (source: `scripts/adc_lib/config.py`):
 │   ├── scripts/
 │   │   ├── adc.py               # CLI entry, 15 subcommands
 │   │   ├── install_skill.ps1    # Backup, copy, verify, roll back on failure
-│   │   └── adc_lib/             # Transport, scan, archive, MediaStore, reconcile, analyze, plan, execute, reports
+│   │   └── adc_lib/             # Transport, scan, archive, MediaStore, app storage, reconcile, analyze, plan, execute, reports
 │   └── references/              # Safety policy, path rules, review guide, USB/ADB, HarmonyOS
 ├── tests/                       # pytest cases and mock fixtures (no phone needed)
 ├── docs/                        # Install, CLI contract, HarmonyOS support, acceptance, test report
@@ -518,7 +544,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.4.0: 222 passed, 1 skipped (223 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it. MediaStore has 11 automated tests and one real-device read-only validation.
+Measured on 2026-11-09 / v1.5.0: 228 passed, 1 skipped (229 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it. MediaStore has 11 automated tests and app storage has 6; both passed one real-device read-only validation.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -566,6 +592,7 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - The archive tracks directories ≥10 MiB and app directories by default; app-version detection needs `pm list packages --show-versioncode`.
 - The directory archive and coverage changes have not been accepted on a real device.
 - The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences.
+- App-level storage only covers base APKs and external directories. Internal data/cache require StorageStatsManager permissions or root and are explicitly unknown. `dumpsys diskstats` is not used because it writes a system cache; no helper APK is included.
 - HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, it does not use Android MediaStore, and `bm clean` is not wired into the executor.
 - The on-device Termux / Shizuku paths have not been accepted on a real device.
 
@@ -575,6 +602,7 @@ Real-device status:
 |---|---|
 | Read-only on a real device (local + ADB) | 1 device passed: HONOR HLK-AL00, HarmonyOS 3.0 compat / Android 10 |
 | MediaStore read-only index | 1 device passed: HONOR HLK-AL00; images/video/audio available, `downloads` unavailable on this ROM; 4,964 of 4,965 rows matched, 0 in-scope missing |
+| App-level storage (partial) | 1 device passed: HONOR HLK-AL00; 293 apps, 8.98 GB base APKs, 1.92 GB external data; internal data/cache not read |
 | Quarantine / verify / restore | 1 device passed, self-created test files only |
 | Cleanup of real user data | 0 devices accepted |
 | Permanent delete (purge) | Not verified on a real device |

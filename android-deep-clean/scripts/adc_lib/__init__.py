@@ -7,5 +7,5 @@ Design goals:
 - transport abstraction (adb / hdc / rish / local / mock).
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 SCHEMA_VERSION = 1

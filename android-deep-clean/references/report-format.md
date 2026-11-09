@@ -72,8 +72,10 @@
     "categories": [],
     "limitations": [],
     "review_required": 5,
-    "storage": {"coverage_status": "good", "file_scan": {}, "unexplained": {}},
+    "storage": {"coverage_status": "good", "file_scan": {}, "unexplained": {}, "media_index": {}, "app_storage": {}},
     "coverage": {"status": "good", "reasons": []},
+    "media_index": {"status": "partial", "index": {}, "crosscheck": {}},
+    "app_storage": {"status": "collected", "known": {}, "unknown": {}, "top_external": []},
     "directory_changes": {"baseline": false, "summary": {}, "grew": []}
   },
   "review_items": [

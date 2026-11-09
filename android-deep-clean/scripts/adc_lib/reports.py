@@ -155,6 +155,79 @@ def _media_lines(media: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _app_storage_lines(app: dict[str, Any]) -> list[str]:
+    if not app:
+        return []
+    status = str(app.get("status") or "not_collected")
+    known = app.get("known") or {}
+    packages = app.get("packages") or {}
+    lines = [
+        "## 应用级存储（部分口径）",
+        "",
+        "> 仅统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 未计入，不能与设备已用空间相加。",
+        "",
+        f"- 状态：{_MEDIA_STATUS_LABELS.get(status, status)}",
+    ]
+    if app.get("reason"):
+        lines.append(f"- 原因：{md_escape(str(app['reason']))}")
+    if not app.get("available"):
+        lines += ["", "应用级存储统计不可用；这不影响文件扫描结果。", ""]
+        for item in app.get("limitations") or []:
+            lines.append(f"- {md_escape(str(item))}")
+        lines.append("")
+        return lines
+    lines += [
+        "",
+        "| 指标 | 数值 | 口径 |",
+        "|---|---:|---|",
+        f"| 应用包 | {packages.get('total', 0)} 个 | 已安装 {packages.get('installed', 0)}，系统 {packages.get('system', 0)} |",
+        f"| 基础 APK | {known.get('apk_human') or human_bytes(int(known.get('apk_bytes') or 0))} | 仅基础 APK，split 未计入 |",
+        f"| 外部 data | {known.get('external_data_human') or human_bytes(int(known.get('external_data_bytes') or 0))} | 含 cache {known.get('external_cache_human') or '0 B'} |",
+        f"| 外部 media | {known.get('external_media_human') or human_bytes(int(known.get('external_media_bytes') or 0))} | `/sdcard/Android/media` |",
+        f"| 外部 obb | {known.get('external_obb_human') or human_bytes(int(known.get('external_obb_bytes') or 0))} | `/sdcard/Android/obb` |",
+        f"| 已知合计 | {known.get('total_human') or human_bytes(int(known.get('total_bytes') or 0))} | APK + 外部目录，不是应用总占用 |",
+        "| 内部 data / cache | 未读取 | shell 缺少 StorageStatsManager 权限或 Root |",
+        "",
+    ]
+    top = app.get("top_external") or []
+    if top:
+        lines += [
+            "### 外部存储占用较高的应用",
+            "",
+            "| 应用 | 包名 | 外部合计 | data | media | obb | 外部 cache | 基础 APK |",
+            "|---|---|---|---:|---:|---:|---:|---:|",
+        ]
+        for item in top[:8]:
+            lines.append(
+                f"| {md_escape(str(item.get('label') or '-'))} | {md_code(str(item.get('package') or ''))} | "
+                f"{item.get('external_total_human') or '-'} | {item.get('data_human') or '-'} | "
+                f"{item.get('media_human') or '-'} | {item.get('obb_human') or '-'} | "
+                f"{item.get('cache_human') or '-'} | {item.get('apk_human') or '-'} |"
+            )
+        lines.append("")
+    residue = app.get("residue") or []
+    if residue:
+        lines += [
+            "### 未安装应用仍保留的外部目录",
+            "",
+            "| 包名 | 外部合计 | data | media | obb |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for item in residue[:8]:
+            lines.append(
+                f"| {md_code(str(item.get('package') or ''))} | {item.get('external_total_human') or '-'} | "
+                f"{item.get('data_human') or '-'} | {item.get('media_human') or '-'} | {item.get('obb_human') or '-'} |"
+            )
+        lines.append("> 这些目录只作为线索，是否清理仍需逐包复核，不能仅凭包名未安装就删除。")
+        lines.append("")
+    limitations = app.get("limitations") or []
+    if limitations:
+        lines += ["应用级存储限制：", ""]
+        lines += [f"- {md_escape(str(item))}" for item in limitations]
+        lines.append("")
+    return lines
+
+
 def _directory_lines(diff: dict[str, Any]) -> list[str]:
     if not diff:
         return []
@@ -267,6 +340,7 @@ def analysis_markdown(analysis: dict[str, Any], config: dict[str, Any]) -> str:
     ]
     lines += _storage_lines(summary.get("storage") or {}, summary.get("coverage") or {})
     lines += _media_lines(summary.get("media_index") or {})
+    lines += _app_storage_lines(summary.get("app_storage") or {})
     lines += _directory_lines(summary.get("directory_changes") or {})
     lines += [
         "## 分类总览",

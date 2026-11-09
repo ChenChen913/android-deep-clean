@@ -145,6 +145,10 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb
 - --max-depth 32
 - --max-files 500000
 - --no-internal
+- --no-media（不采集 MediaStore 索引）
+- --no-app-storage（不采集应用基础 APK 大小）
+
+`scan` 默认在主机侧写 `scan/aux/sources.json`、`media-index.jsonl` 与 `app-storage.json`；这些辅助数据只用于交叉验证，不授权删除。
 
 ### 4.3 分析
 
@@ -156,7 +160,7 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <
 python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <序列号> --hash-mode pc
 ~~~
 
-产出清理前报告、analysis-summary.json、review-template.json，并记录 hash_mode。
+产出清理前报告、analysis-summary.json、review-template.json，并记录 hash_mode。报告包含「存储空间与扫描覆盖」「媒体索引核对」「应用级存储（部分口径）」「跨轮目录变化」；应用级存储只统计基础 APK 与外部目录，内部 data/cache 不可读。
 
 ### 4.4 AI 复核
 

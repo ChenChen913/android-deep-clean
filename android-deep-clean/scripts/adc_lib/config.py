@@ -77,6 +77,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_items": 200000,
         "max_output_bytes": 100000000,
     },
+    "app_storage": {
+        "enabled": True,
+        "timeout_seconds": 30,
+        "max_packages": 1000,
+        "top_apps": 15,
+    },
     "exclude_paths": [
         "/sdcard/.android-deep-clean",
         "/sdcard/Android/.android-deep-clean",
@@ -111,7 +117,7 @@ def load_config(path: str | None = None) -> dict[str, Any]:
 
 
 def _validate_config(config: dict[str, Any]) -> None:
-    for key in ("thresholds", "scan", "report", "quarantine", "safety", "archive", "media_store"):
+    for key in ("thresholds", "scan", "report", "quarantine", "safety", "archive", "media_store", "app_storage"):
         if not isinstance(config.get(key), dict):
             raise ValidationError(f"config.{key} must be an object")
     for key in ("max_files", "max_depth", "max_hash_files", "max_candidates"):
@@ -133,6 +139,10 @@ def _validate_config(config: dict[str, Any]) -> None:
     collections = config["media_store"].get("collections")
     if not isinstance(collections, list) or any(item not in {"images", "video", "audio", "downloads"} for item in collections):
         raise ValidationError("config.media_store.collections must be a list of images/video/audio/downloads")
+    for key in ("timeout_seconds", "max_packages", "top_apps"):
+        value = config["app_storage"].get(key)
+        if not isinstance(value, int) or value < 0:
+            raise ValidationError(f"config.app_storage.{key} must be a non-negative integer")
     if not isinstance(config.get("extra_protected_paths"), list):
         raise ValidationError("config.extra_protected_paths must be a list")
 

@@ -25,6 +25,7 @@
 | Shizuku/rish | Shizuku 启动后 rish | 同 ADB shell | 同 ADB shell | 同 standard/limited |
 | SAF/MediaStore | 普通应用/用户选择 | 用户选择的目录/媒体 | Android/data、obb、应用私有、未索引文件 | 不作为本 Skill 主通道 |
 | MediaStore（shell 辅助） | ADB shell / rish | 图片/视频/音频/下载媒体索引及元数据 | 未索引文件、应用私有媒体、部分 SD 卡/多用户卷 | v1.4.0 起只读交叉验证；不生成候选、不授权删除 |
+| 应用级存储（部分） | ADB shell / rish | 基础 APK 路径与大小、外部 Android/data/media/obb | 应用内部 data/cache、split APK、其他用户 | v1.5.0 起只读；不需 Root；不生成候选 |
 | 无权限 | 未连接/未授权 | 无 | 全部 | 停止并提示，不假扫描 |
 
 MediaStore 辅助索引（v1.4.0）：
@@ -34,6 +35,13 @@ MediaStore 辅助索引（v1.4.0）：
 - Termux `local` 通常没有媒体读取权限，会记为不可用；ADB/Shizuku 也可能因 OEM 收紧失败，报告只写差异，不据此删除文件。
 - 媒体索引不保证覆盖其他用户、工作资料、隐藏目录、应用私有媒体或所有 SD 卡卷；其大小与文件扫描、应用统计口径不同，不能相加。
 - 真机验证：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）只读通过；图片/视频/音频可采集，`downloads` 集合在该 ROM 返回 unknown URL，已降级为部分可用；路径大小写差异已按共享存储不敏感处理。
+
+应用级存储（v1.5.0）：
+
+- `scan` 使用 `pm list packages -f` 与批量 `stat` 读取基础 APK 大小；外部 data/media/obb 由文件扫描统计；不需要 Root。
+- 应用内部 data/cache 需要 StorageStatsManager 权限或 Root，普通 ADB shell 不可读。本工具不使用会写系统缓存文件的 `dumpsys diskstats`，也不要求用户安装辅助 APK。
+- 只统计基础 APK，split APK 未计入；“已知合计”不是应用总占用，不能与设备已用空间相加。
+- 真机验证：293 个应用，基础 APK 8.98 GB，外部 data 1.92 GB；内部 data/cache 未读取。
 
 Android 版本差异：
 - Android 10：默认 scoped storage，但 target 29 可临时退出；MediaStore 新增 Downloads 集合。

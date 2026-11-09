@@ -87,6 +87,7 @@ doctor 会实际执行并记录：
 - `downloads` 集合需要 API 29+；`relative_path`/`is_pending` 为 API 29+，`is_trashed` 为 API 30+。字段不支持时降级投影，权限或命令失败时记录为不可用。
 - MediaStore 无法可靠读出“未被媒体库索引的文件”；Termux local 通常无媒体权限。HarmonyOS NEXT 没有 Android MediaStore，不执行该查询。
 - 删除共享媒体后 MediaStore 可能有延迟/幽灵条目；verify 以文件系统 stat 为准，并说明媒体库刷新可能滞后。交叉核对中的“索引有、扫描无”不能作为文件已删除的结论。
+- v1.5.0 起，ADB shell / Shizuku 可用 `pm list packages -f` + `stat` 读取基础 APK 大小，外部 data/media/obb 由文件扫描统计。应用内部 data/cache 需要 StorageStatsManager 权限或 Root；本工具不使用会写系统缓存的 `dumpsys diskstats`，也不提供完整应用占用。
 
 ## 9. 真机验证清单
 

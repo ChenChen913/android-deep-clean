@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.4.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.5.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -407,6 +407,28 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 多用户、工作资料、部分 SD 卡卷、隐藏目录和索引延迟都可能造成差异，报告会明确列为限制。
 - 已在 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）完成只读真机验证：4,965 条媒体索引 / 7.35 GB，4,964 条与文件扫描匹配，8 条仅大小写不同，1 条在扫描范围外，0 条范围内缺失；该 ROM 的 `downloads` 集合不可用。更多 OEM/Android 版本仍需验证。
 
+### 应用级存储（部分口径）
+
+v1.5.0 起，`scan` 会尝试读取每个已安装应用的基础 APK 大小：
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-app-storage
+```
+
+采集方式：`pm list packages -f` 获取基础 APK 路径，再用批量 `stat` 读取大小。结果写入 `scan/aux/app-storage.json`，不读取手机文件内容，不需要 Root。
+
+`analyze` 会在报告增加「应用级存储（部分口径）」区块，并写入 `analysis-summary.json` 的 `summary.app_storage`：
+
+- 已知：基础 APK、外部 `Android/data` / `Android/media` / `Android/obb`、外部 cache。
+- 未知：应用内部 data/cache、split APK。
+- 能列出外部存储占用较高的应用，以及未安装应用仍保留的外部目录。
+- 应用类候选（app_cache / browser_cache / chat_cache / residue）会附带包级 APK 与外部目录证据，但仍是证据，不改变风险或可选择性。
+
+**为什么不是完整应用占用**：当前 ADB shell 没有 StorageStatsManager 读取其他应用内部数据的权限；`dumpsys diskstats` 会写系统缓存文件，违反只读原则，因此不使用；辅助 APK 需要额外授权与长期维护，本版本不做。所以这里的“已知合计”不能当作应用总占用，也不能与设备已用空间相加。
+
+真机验证（HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。内部 data/cache 未读取，未修改任何手机文件。
+
 ### 命令总表
 
 | 命令 | 用途 | 修改设备 |
@@ -509,6 +531,10 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 | `media_store.collections` | 四个集合 | `images/video/audio/downloads` |
 | `media_store.timeout_seconds` | 60 | 单个集合查询超时 |
 | `media_store.max_items` | 200000 | 媒体索引条数上限，超限标记截断 |
+| `app_storage.enabled` | `true` | 是否采集应用基础 APK 大小 |
+| `app_storage.timeout_seconds` | 30 | 单批 `stat` 超时 |
+| `app_storage.max_packages` | 1000 | 最多采集的应用数 |
+| `app_storage.top_apps` | 15 | 报告展示的应用数 |
 
 ## 项目结构
 
@@ -519,7 +545,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 │   ├── scripts/
 │   │   ├── adc.py               # CLI 入口，15 个子命令
 │   │   ├── install_skill.ps1    # 备份、复制、校验、失败回滚
-│   │   └── adc_lib/             # 传输、扫描、目录档案、MediaStore、空间对账、分析、计划、执行、报告
+│   │   └── adc_lib/             # 传输、扫描、目录档案、MediaStore、应用存储、空间对账、分析、计划、执行、报告
 │   └── references/              # 安全策略、路径规则、复核指南、USB/ADB、鸿蒙等
 ├── tests/                       # pytest 用例与 mock 夹具（不需要手机）
 ├── docs/                        # 安装、CLI 契约、鸿蒙支持、真机验收、测试报告
@@ -535,7 +561,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.4.0 实测：222 passed, 1 skipped（223 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。MediaStore 已有 11 个自动化测试，并在 1 台真机完成只读验证。
+2026-11-09 / v1.5.0 实测：228 passed, 1 skipped（229 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。MediaStore 11 个、应用级存储 6 个自动化测试，均已在 1 台真机完成只读验证。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -583,6 +609,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
 - 目录档案与覆盖率改动尚未完成真机验收。
 - MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。
+- 应用级存储只统计基础 APK 与外部目录；内部 data/cache 需要 StorageStatsManager 权限或 Root，本版本明确标记为未知。未使用会写系统缓存的 `dumpsys diskstats`，也未开发辅助 APK。
 - HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，也不使用 Android MediaStore；`bm clean` 未接入执行器。
 - 手机端 Termux / Shizuku 通路尚未完成真机验收。
 
@@ -592,6 +619,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 |---|---|
 | 真实设备只读（local + ADB） | 1 台通过：HONOR HLK-AL00，HarmonyOS 3.0 兼容版 / Android 10 |
 | MediaStore 只读索引 | 1 台通过：HONOR HLK-AL00；图片/视频/音频可用，`downloads` 在该 ROM 不可用；4,965 条索引中 4,964 条匹配，范围内缺失 0 条 |
+| 应用级存储（部分） | 1 台通过：HONOR HLK-AL00；293 个应用基础 APK 8.98 GB，外部 data 1.92 GB；内部 data/cache 未读取 |
 | 隔离 / 验证 / 恢复 | 1 台通过，仅自建测试文件 |
 | 用户真实数据清理 | 0 台完成验收 |
 | 永久删除（purge） | 真机未验证 |

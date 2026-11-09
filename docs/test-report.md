@@ -1,24 +1,41 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.4.0，2026-11-09）
+## 当前版本摘要（v1.5.0，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.4.0（目录尚未初始化 Git） |
-| 本地 Mock | 222 passed / 1 skipped（223 collected） |
+| 验证对象 | 本地工作区 v1.5.0（Git 仓库已初始化并推送到 main） |
+| 本地 Mock | 228 passed / 1 skipped（229 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 新增能力验证 | MediaStore 辅助索引：11 个自动化/mock 用例 + 1 台真机只读验证；目录统计、覆盖率、目录档案仍为自动化/mock |
+| 新增能力验证 | MediaStore 11 个 + 应用级存储 6 个自动化/mock 用例，均完成 1 台真机只读验证 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB 的 doctor、scan、analyze 全部成功 |
-| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配，8 条仅大小写不同，1 条在扫描范围外，范围内缺失 0 条，匹配率 99.98%；`downloads` 集合在该 ROM 不可用，按部分可用降级 |
-| 真机修复 | `datetaken` 列名错误、部分 ROM 不支持 `media_type`、共享存储路径大小写不一致；均已修复并加测试 |
+| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配，8 条仅大小写不同，1 条在扫描范围外，范围内缺失 0 条，匹配率 99.98%；`downloads` 集合不可用 |
+| 应用级存储真机结果 | 293 个应用，基础 APK 8.98 GB；49 个应用外部 data 合计 1.92 GB；未安装遗留目录 1 个（109 B）；内部 data/cache 未读取 |
+| 真机修复 | `datetaken` 列名、`media_type` 不支持、路径大小写；均已修复并加测试 |
 | 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功；**仅测试文件，未处理用户真实数据** |
 | 真实设备清理/恢复 | 0 台完成正式验收；本轮未执行 select/execute/purge/restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
-| 当前定位 | 只读链路、MediaStore 辅助索引与隔离/恢复机制已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
+| 当前定位 | 只读链路、MediaStore、应用级存储（部分）与隔离/恢复机制已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.5.0 应用级存储（部分口径）（2026-11-09）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），shell 权限（无 root）。测试全程只读，未执行 select/execute/purge/restore。
+
+| 项目 | 结果 |
+|---|---|
+| 自动化测试 | 228 passed / 1 skipped；新增 6 个应用级存储用例 |
+| 采集方式 | `pm list packages -f` + 批量 `stat`；不使用 Root、不使用 `dumpsys diskstats` |
+| 应用数量 | 293 个已安装应用；基础 APK 9,642,984,225 B（8.98 GB） |
+| 外部目录 | 49 个应用有外部 data，合计 2,060,725,476 B（1.92 GB）；media/obb 0 B |
+| 外部 cache | 4,953,179 B（4.72 MB），是外部 data 的子集 |
+| 遗留目录 | 1 个未安装应用外部目录，109 B（`com.tencent.ams`） |
+| 未知范围 | 应用内部 data/cache、split APK 未计入；普通 shell 无 StorageStatsManager 权限 |
+| 候选证据 | app_cache / residue 候选附带包级 APK/外部目录证据；候选 ID、风险、可选择性未改变 |
+| 安全 | 未修改手机文件；未生成清理计划或令牌；应用统计只作为证据 |
 
 ### v1.4.0 MediaStore 只读辅助索引（2026-11-09）
 

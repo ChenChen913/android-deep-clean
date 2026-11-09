@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.5.0 — 应用级存储（部分口径）
+
+### Added
+- `scan` 新增只读应用级存储采集：通过 `pm list packages -f` 获取基础 APK 路径，再用批量 `stat` 读取大小；结果写入 `scan/aux/app-storage.json` 与 `snapshot-meta.json` 的 `aux.app_storage`。
+- `analyze` 新增 `summary.app_storage` 与 `analysis.db` 的 `app_storage` 表：按包汇总基础 APK、外部 data/media/obb、外部 cache、已知合计、未安装应用遗留外部目录；新增「应用级存储（部分口径）」报告区块。
+- 应用类候选（app_cache / browser_cache / chat_cache / residue）证据新增包级 APK 与外部目录统计；仍然只作为证据。
+- `scan` / `recheck` 新增 `--no-app-storage`；配置新增 `app_storage.enabled/timeout_seconds/max_packages/top_apps`。
+
+### Safety
+- 应用级采集只读：`pm list packages -f` + `stat`，不读取应用内部 data/cache，不使用 Root，也不使用会写系统缓存的 `dumpsys diskstats`。
+- 不生成候选、不改变风险/可选择性/文件清单；应用统计不参与 `plan/select/execute`。
+- 内部 data/cache 与 split APK 明确标记为未知；报告说明“已知合计不是应用总占用，不能与设备已用空间相加”。
+
+### Verified
+- HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）只读验证：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。
+- 内部 data/cache 在该 shell 下不可读；未执行任何清理命令。
+- 新增 6 个应用级存储测试；全量 228 passed, 1 skipped。
+
+### Limitations
+- StorageStatsManager 的应用内部 data/cache 统计在当前 ADB shell 权限下不可用；需要辅助 APK、特殊授权或 Root，本版本不做。
+- 只统计基础 APK；split APK 未计入，APK 大小也不能代表应用总占用。
+
 ## v1.4.0 — MediaStore 只读辅助索引与交叉验证
 
 ### Added

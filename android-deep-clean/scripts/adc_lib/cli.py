@@ -116,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-internal", dest="no_internal", action="store_true", help="不扫描 /data/data 下的应用 cache")
     p.add_argument("--no-archive", dest="no_archive", action="store_true", help="不更新跨轮目录档案")
     p.add_argument("--no-media", dest="no_media", action="store_true", help="不采集 MediaStore 媒体索引")
+    p.add_argument("--no-app-storage", dest="no_app_storage", action="store_true", help="不采集应用基础 APK 大小")
 
     p = sub.add_parser("analyze", help="基于快照生成候选、证据、风险与清理前报告")
     add_common(p)
@@ -168,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(p)
     p.add_argument("--no-archive", dest="no_archive", action="store_true", help="不更新跨轮目录档案")
     p.add_argument("--no-media", dest="no_media", action="store_true", help="不采集 MediaStore 媒体索引")
+    p.add_argument("--no-app-storage", dest="no_app_storage", action="store_true", help="不采集应用基础 APK 大小")
 
     p = sub.add_parser("archive", help="跨轮目录档案：查看变化、标记目录")
     asub = p.add_subparsers(dest="archive_action", required=True)
@@ -400,6 +402,7 @@ def cmd_scan(args: Any, config: dict[str, Any]) -> int:
         include_internal=not args.no_internal,
         progress=not args.quiet,
         collect_media_store=not getattr(args, "no_media", False),
+        collect_app_storage=not getattr(args, "no_app_storage", False),
     )
     diff: dict[str, Any] = {}
     if not getattr(args, "no_archive", False):
@@ -427,6 +430,10 @@ def cmd_scan(args: Any, config: dict[str, Any]) -> int:
         if media:
             print(f"- 媒体索引：{_media_status_label(str(media.get('status') or 'unknown'))}，"
                   f"条目 {media.get('items', 0)} / {human_bytes(media.get('bytes', 0))}")
+        app = (meta.get("aux") or {}).get("app_storage") or {}
+        if app:
+            print(f"- 应用 APK：{_media_status_label(str(app.get('status') or 'unknown'))}，"
+                  f"{app.get('items', 0)} 个 / {human_bytes(app.get('bytes', 0))}")
         if diff:
             summary = diff.get("summary") or {}
             if diff.get("baseline"):
@@ -661,7 +668,11 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
         "storage": previous_meta.get("storage") or [],
     }
     scanner = Scanner(transport, config, new_state, doctor)
-    meta = scanner.scan(progress=not args.quiet, collect_media_store=not getattr(args, "no_media", False))
+    meta = scanner.scan(
+        progress=not args.quiet,
+        collect_media_store=not getattr(args, "no_media", False),
+        collect_app_storage=not getattr(args, "no_app_storage", False),
+    )
     diff: dict[str, Any] = {}
     if not getattr(args, "no_archive", False):
         try:

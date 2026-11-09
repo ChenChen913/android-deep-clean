@@ -42,6 +42,12 @@ def build_storage_accounting(scan_meta: dict[str, Any], config: dict[str, Any]) 
     media_reason = str(media.get("reason") or "")
     if not media and not media_reason:
         media_reason = "本轮扫描未采集 MediaStore 索引"
+    app = ((scan_meta.get("aux") or {}).get("app_storage") or {})
+    app_status = str(app.get("status") or "not_collected")
+    app_available = bool(app.get("available")) or app_status in {"collected", "partial"}
+    app_reason = str(app.get("reason") or "")
+    if not app and not app_reason:
+        app_reason = "本轮扫描未采集应用级存储统计"
 
     return {
         "schema": 1,
@@ -91,6 +97,16 @@ def build_storage_accounting(scan_meta: dict[str, Any], config: dict[str, Any]) 
             "pending": int(media.get("pending") or 0),
             "note": "媒体索引来自系统媒体库，与文件扫描、应用统计、系统已用空间口径不同，不能相加。",
         },
+        "app_storage": {
+            "status": app_status,
+            "available": app_available,
+            "reason": app_reason,
+            "packages": int(app.get("installed") or 0),
+            "apk_bytes": int(app.get("bytes") or 0),
+            "internal_data": "不可读",
+            "internal_cache": "不可读",
+            "note": "仅基础 APK；内部 data/cache 与 split APK 未计入，不能与设备已用空间相加。",
+        },
         "sources": [
             {"name": "file_scan", "available": True, "kind": "filesystem", "read_only": True},
             {
@@ -108,10 +124,13 @@ def build_storage_accounting(scan_meta: dict[str, Any], config: dict[str, Any]) 
             },
             {
                 "name": "app_storage",
-                "available": False,
+                "available": app_available,
                 "kind": "app_stats",
                 "read_only": True,
-                "reason": "批次 3 尚未接入应用级存储统计",
+                "status": app_status,
+                "items": int(app.get("installed") or 0),
+                "bytes": int(app.get("bytes") or 0),
+                "reason": app_reason,
             },
         ],
     }

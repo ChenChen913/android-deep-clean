@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+from .app_storage import AppStorageCollector
 from .device import Doctor, doctor_markdown
 from .media_store import MediaStoreCollector
 from .models import Entry, PackageIndex
@@ -197,6 +198,7 @@ class Scanner:
         include_internal: bool | str = True,
         progress: bool = True,
         collect_media_store: bool = True,
+        collect_app_storage: bool = True,
     ) -> dict[str, Any]:
         scan_dir = self.state.dir("scan")
         previous_scan = self._archive_previous_scan()
@@ -333,6 +335,28 @@ class Scanner:
             from .util import atomic_write_json
 
             atomic_write_json(aux_dir / "sources.json", media_manifest)
+        try:
+            app_manifest = AppStorageCollector(
+                self.transport, self.config, self.state, self.doctor, self.packages
+            ).collect(enabled=collect_app_storage)
+        except Exception as exc:  # noqa: BLE001 - auxiliary source must never break scan
+            aux_dir = self.state.dir("scan") / "aux"
+            aux_dir.mkdir(parents=True, exist_ok=True)
+            app_manifest = {
+                "schema": 1,
+                "status": "unavailable",
+                "available": False,
+                "reason": f"应用级存储采集异常：{exc}",
+                "platform": str((self.doctor.get("capabilities") or {}).get("platform") or "android"),
+                "packages": [],
+                "items": 0,
+                "bytes": 0,
+                "limitations": [f"应用级存储采集异常：{exc}"],
+                "manifest_path": str(aux_dir / "app-storage.json"),
+            }
+            from .util import atomic_write_json
+
+            atomic_write_json(aux_dir / "app-storage.json", app_manifest)
         meta = {
             "schema": 1,
             "scanned_at": now_iso(),
@@ -363,7 +387,7 @@ class Scanner:
             },
             "stats": {"entries": total_entries, "files": total_files, "bytes": total_bytes},
             "coverage": coverage,
-            "aux": {"schema": 1, "media_store": media_manifest},
+            "aux": {"schema": 1, "media_store": media_manifest, "app_storage": app_manifest},
             "skipped": self.skip[:2000],
             "doctor_path": str(self.state.file("doctor", "doctor.json")),
         }
@@ -661,6 +685,19 @@ def scan_markdown(meta: dict[str, Any], directory_diff: dict[str, Any] | None = 
             lines.append(f"- 回收站标记 {media.get('trashed', 0)}，pending {media.get('pending', 0)}")
         lines.append("- 说明：媒体索引只用于交叉验证，不参与文件扫描统计，也不授权删除。")
         for item in media.get("limitations") or []:
+            lines.append(f"- 限制：{item}")
+    app = (meta.get("aux") or {}).get("app_storage") or {}
+    if app:
+        lines += ["", "## 应用级存储（部分口径）", ""]
+        lines.append(f"- 状态：{_media_status_label(str(app.get('status') or 'unknown'))}")
+        if app.get("reason"):
+            lines.append(f"- 原因：{app.get('reason')}")
+        lines.append(
+            f"- 基础 APK：{app.get('items', 0)} 个应用 / {human_bytes(app.get('bytes', 0))}；"
+            "split APK 未计入"
+        )
+        lines.append("- 说明：内部 data/cache 不可读；外部 data/media/obb 由文件扫描统计。")
+        for item in app.get("limitations") or []:
             lines.append(f"- 限制：{item}")
     lines += [
         "",

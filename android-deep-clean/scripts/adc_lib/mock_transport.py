@@ -183,7 +183,51 @@ class MockTransport(Transport):
             raise TransportError(f"mock: 无法解析 shell 命令：{exc}") from exc
         if parts[:2] == ["content", "query"]:
             return self._mock_content_query(parts)
+        if parts[:1] == ["stat"]:
+            return self._mock_stat(parts)
         raise TransportError("mock transport 不执行任意 shell 命令")
+
+    def _mock_stat(self, parts: list[str]) -> tuple[int, str, str]:
+        format_text = ""
+        paths: list[str] = []
+        index = 1
+        while index < len(parts):
+            token = parts[index]
+            if token in {"-c", "--format"} and index + 1 < len(parts):
+                format_text = parts[index + 1]
+                index += 2
+                continue
+            if token.startswith("-"):
+                index += 1
+                continue
+            paths.append(token)
+            index += 1
+        if format_text not in {"%n|%s", "%s|%n"}:
+            raise TransportError("mock: 只支持 stat 的 %n|%s 格式")
+        lines: list[str] = []
+        errors: list[str] = []
+        for device_path in paths:
+            if self._cap_blocked(device_path):
+                errors.append(f"stat: {device_path}: permission denied")
+                continue
+            try:
+                host, _ = self._map(device_path)
+            except TransportError as exc:
+                errors.append(str(exc))
+                continue
+            if not (host.exists() or host.is_symlink()):
+                errors.append(f"stat: {device_path}: No such file or directory")
+                continue
+            try:
+                size = int(host.stat().st_size)
+            except OSError as exc:
+                errors.append(f"stat: {device_path}: {exc}")
+                continue
+            if format_text == "%s|%n":
+                lines.append(f"{size}|{device_path}")
+            else:
+                lines.append(f"{device_path}|{size}")
+        return (0 if lines else 1), ("\n".join(lines) + ("\n" if lines else "")), "\n".join(errors)
 
     def _mock_content_query(self, parts: list[str]) -> tuple[int, str, str]:
         uri = ""

@@ -16,6 +16,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from .app_storage_index import AppStorageIndex
 from .archive import DirectoryArchive
 from .media_index import MediaIndex
 from .models import CandidateFile, PackageIndex
@@ -186,6 +187,11 @@ class Analyzer:
         self.media_index = MediaIndex(self.state, self.scan_conn, self.scan_meta, self.config)
         self.media_index.load()
         self.media_index.ingest(self.db)
+        self.app_storage = AppStorageIndex(
+            self.state, self.scan_conn, self.scan_meta, self.config, self.packages
+        )
+        self.app_storage.load()
+        self.app_storage.ingest(self.db)
 
     # ------------------------------------------------------------- db helpers
     def _rows(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -378,6 +384,7 @@ class Analyzer:
                 entry["text"] = f"逻辑大小 {human_bytes(total_bytes)}"
             checked_evidence.append(entry)
         checked_evidence.extend(self.media_index.evidence(final_files, category))
+        checked_evidence.extend(self.app_storage.evidence(final_files, category))
         checked_evidence.extend(self._history_evidence(primary_path))
         sample_paths = [item.path for item in delete_files[: self.sample_limit]] or [
             item.path for item in final_files if item.kind == "dir"
@@ -1201,8 +1208,10 @@ class Analyzer:
             self.limitations.append(f"候选组达到上限 {self.max_candidates}，部分内容未列出。")
         summary = self._summary()
         summary["media_index"] = self.media_index.summary()
+        summary["app_storage"] = self.app_storage.summary()
         summary["storage"] = build_storage_accounting(self.scan_meta, self.config)
         self.media_index.attach_storage(summary["storage"])
+        self.app_storage.attach_storage(summary["storage"])
         summary["coverage"] = self.scan_meta.get("coverage") or {}
         summary["directory_changes"] = self.directory_diff
         items = self._items()
@@ -1234,6 +1243,7 @@ class Analyzer:
             "storage": summary["storage"],
             "coverage": summary["coverage"],
             "media_index": summary["media_index"],
+            "app_storage": summary["app_storage"],
             "directory_changes": summary["directory_changes"],
             "items": items,
             "limitations": self.limitations,
