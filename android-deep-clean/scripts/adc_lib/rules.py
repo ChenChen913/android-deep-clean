@@ -248,6 +248,40 @@ def category_title(category: str) -> str:
     return CATEGORY_META.get(category, {}).get("title", category)
 
 
+def category_description(category: str) -> str:
+    return CATEGORY_META.get(category, {}).get("description", "未分类内容。")
+
+
+CATEGORY_IMPACT = {
+    "app_cache": "应用会重新生成缓存；不会删除账号、聊天记录或数据库。若含离线内容，需要重新下载。",
+    "browser_cache": "网页会重新加载，首次打开可能变慢；不删除书签、密码与下载记录。",
+    "thumbnails": "相册/文件管理器会重新生成缩略图；不删除原图或原视频。",
+    "temp_logs": "临时文件与崩溃日志被删除，通常不影响正常使用；排障所需的日志会丢失。",
+    "trash": "回收站内的文件被永久删除，无法再从系统回收站恢复。",
+    "duplicates": "只删除哈希相同的多余副本，每组保留一份；保留的那份不受影响。",
+    "apk": "已安装应用不受影响；只失去离线重装/降级用的安装包。",
+    "archives": "压缩包与备份被删除；如果它是唯一备份，数据将无法找回。",
+    "screenshots": "截图被永久删除；若截图含账号、票据或工作资料，删除后无法恢复。",
+    "large_old": "大文件被删除；可能是仍需的资料、镜像或备份，删除后不可恢复。",
+    "media_old": "原始照片/视频被永久删除，无法恢复；请先确认已备份。",
+    "download_old": "下载文件被删除；若仍需该资料，需要重新下载。",
+    "chat_cache": "仅清理 cache/temp 子目录；聊天记录与聊天媒体不在清理范围内。",
+    "ota": "系统更新包被删除；如需降级或救砖，需要重新获取官方包。",
+    "empty_dirs": "仅用 rmdir 删除空目录；目录一旦非空就会失败，不会递归删除。",
+    "residue": "残留的外部数据被删除；若之后重装该应用，存档/下载可能丢失。",
+}
+
+
+def category_impact(category: str, action: str = "") -> str:
+    if action == "rmdir":
+        return "仅删除空目录本身；不会递归删除内容，非空目录会失败。"
+    return CATEGORY_IMPACT.get(
+        category,
+        "删除后不可恢复；请先确认内容用途，默认建议保留。",
+    )
+
+
+
 def is_system_path(path: str) -> bool:
     normalized = normalize_device_path(path)
     return any(is_under(normalized, prefix) for prefix in HARD_BLOCK_PREFIXES)

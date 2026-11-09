@@ -22,6 +22,7 @@ from .media_index import MediaIndex
 from .models import CandidateFile, PackageIndex
 from .reconcile import build_storage_accounting
 from .reports import analysis_markdown
+from .space_story import build_space_story
 from .rules import (
     APK_EXTS,
     ARCHIVE_EXTS,
@@ -33,6 +34,7 @@ from .rules import (
     TRASH_DIR_NAMES,
     app_info,
     category_risk,
+    category_impact,
     category_title,
     describe_app,
     guard_path,
@@ -1167,6 +1169,7 @@ class Analyzer:
     def _items(self) -> list[dict[str, Any]]:
         items = []
         for row in self._rows("SELECT * FROM candidates ORDER BY category, risk, total_bytes DESC, id"):
+            reasons = json.loads(row["reasons_json"] or "[]")
             items.append(
                 {
                     "id": row["id"], "category": row["category"],
@@ -1178,7 +1181,12 @@ class Analyzer:
                     "files_digest": row["files_digest"],
                     "confidence": row["confidence"], "app_pkg": row["app_pkg"], "app_kind": row["app_kind"],
                     "evidence": json.loads(row["evidence_json"] or "[]"),
-                    "reasons": json.loads(row["reasons_json"] or "[]"),
+                    "reasons": reasons,
+                    "explain": {
+                        "what": CATEGORY_META.get(row["category"], {}).get("description", ""),
+                        "why": reasons[0] if reasons else "规则命中该分类，详见证据。",
+                        "impact": category_impact(row["category"], row["action"]),
+                    },
                     "keep_suggestion": row["keep_suggestion"],
                     "ai_review_required": bool(row["ai_review_required"]),
                     "selectable": bool(row["selectable"]), "notes": row["notes"],
@@ -1213,6 +1221,9 @@ class Analyzer:
         self.media_index.attach_storage(summary["storage"])
         self.app_storage.attach_storage(summary["storage"])
         summary["coverage"] = self.scan_meta.get("coverage") or {}
+        summary["space_story"] = build_space_story(
+            self.scan_meta, summary["app_storage"], summary["media_index"], self.config
+        )
         summary["directory_changes"] = self.directory_diff
         items = self._items()
         review_template = {
@@ -1244,6 +1255,7 @@ class Analyzer:
             "coverage": summary["coverage"],
             "media_index": summary["media_index"],
             "app_storage": summary["app_storage"],
+            "space_story": summary["space_story"],
             "directory_changes": summary["directory_changes"],
             "items": items,
             "limitations": self.limitations,
@@ -1267,7 +1279,7 @@ class Analyzer:
                 {key: item[key] for key in (
                     "id", "category", "title", "risk", "total_bytes", "human_size",
                     "file_count", "sample_paths", "ai_review_required", "selectable",
-                    "evidence", "keep_suggestion",
+                    "evidence", "explain", "keep_suggestion",
                 )}
                 for item in items
             ],

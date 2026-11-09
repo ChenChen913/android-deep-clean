@@ -143,9 +143,10 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <
 ~~~
 
 生成：
-- report-before.md：人类可读的清理前报告（分类、数量、大小、路径示例、理由、风险、建议），并包含「存储空间与扫描覆盖」「媒体索引核对」「应用级存储（部分口径）」「跨轮目录变化」区块。
-- analysis-summary.json：AI 优先读这个（比完整 analysis.json 小），包含 `storage`、`coverage`、`media_index`、`app_storage`、`directory_changes`。
+- report-before.md：人类可读的清理前报告（分类、数量、大小、路径示例、理由、风险、建议），开头是「空间去向速览」，并包含「存储空间与扫描覆盖」「媒体索引核对」「应用级存储（部分口径）」「跨轮目录变化」区块。
+- analysis-summary.json：AI 优先读这个（比完整 analysis.json 小），包含 `storage`、`coverage`、`media_index`、`app_storage`、`space_story`、`directory_changes`。
 - review-template.json：需要复核的候选模板。
+- 每个候选带 `explain`：这是什么、为什么列出、删除影响；它只提高可读性，不改变风险等级。
 - 候选证据会附带媒体索引（MIME/尺寸/时长/trashed/pending）、应用级存储（基础 APK/外部 data/media/obb）、跨轮档案、增长/缩小、删后复活、应用版本变化等线索；这些都只是证据，不改变风险等级。
 
 然后**由 AI 做深度复核**（见下一节），把结论写成 review.json。不要跳过复核直接让用户选 CAUTION。

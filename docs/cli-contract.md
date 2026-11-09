@@ -29,7 +29,7 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
 | `archive stats` | 查看目录档案统计 | 否 |
 | `archive mark --path PATH --decision keep/watch/neutral [--note TEXT]` | 给目录写分析标记 | 否 |
 
-`scan` 额外参数：`--roots`、`--max-depth`、`--max-files`、`--no-internal`、`--no-archive`、`--no-media`、`--no-app-storage`。`snapshot-meta.json` 的 `coverage` 包含 `status`（good/partial/suspect）、`root_status`、`skipped_paths`、`logical_bytes`、`unique_bytes`、`hardlink_saved_bytes`、`dir_count`；`aux` 包含 `media_store` 与 `app_storage` 状态；`directory-diff.json` 记录本轮跨轮目录变化。`analysis-summary.json` 的 `summary` 包含 `storage`、`coverage`、`media_index`、`app_storage`、`directory_changes`。
+`scan` 额外参数：`--roots`、`--max-depth`、`--max-files`、`--no-internal`、`--no-archive`、`--no-media`、`--no-app-storage`。`snapshot-meta.json` 的 `coverage` 包含 `status`（good/partial/suspect）、`root_status`、`skipped_paths`、`logical_bytes`、`unique_bytes`、`hardlink_saved_bytes`、`dir_count`；`aux` 包含 `media_store` 与 `app_storage` 状态；`directory-diff.json` 记录本轮跨轮目录变化。`analysis-summary.json` 的 `summary` 包含 `storage`、`coverage`、`media_index`、`app_storage`、`space_story`、`directory_changes`；每个 item 带 `explain`（what/why/impact）。
 
 `archive mark` 只接受 `keep/watch/neutral`。标记是分析证据，不是删除授权，不改变任何候选风险或选择资格。
 

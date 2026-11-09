@@ -460,6 +460,9 @@ def cmd_analyze(args: Any, config: dict[str, Any]) -> int:
         print(json.dumps(analysis, ensure_ascii=False, indent=2))
     else:
         print("分析完成（未删除任何文件）")
+        story = summary.get("space_story") or {}
+        if story.get("headline"):
+            print(f"- 空间概况：{story['headline']}")
         print(f"- 候选组：{summary.get('candidate_groups', 0)}，文件 {summary.get('candidate_files', 0)}，逻辑大小 {human_bytes(summary.get('candidate_bytes', 0))}")
         print(f"- 需复核：{summary.get('review_required', 0)} 组")
         print(f"- 报告：{state.get_file('report_before')}")

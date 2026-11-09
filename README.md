@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.5.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.6.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -429,6 +429,27 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 
 真机验证（HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。内部 data/cache 未读取，未修改任何手机文件。
 
+### 空间去向速览与候选解释（v1.6.0）
+
+`report-before.md` 开头新增「空间去向速览」，不要求用户自己换算口径：
+
+- 列出设备已用、文件扫描、基础 APK、应用外部目录、媒体索引五项，并标注每项“是否与其他项重叠”。
+- 给出「已知且不重叠合计」（文件扫描 + 基础 APK）与「未解释差额」。
+- 明确说明应用外部目录与媒体索引已包含在文件扫描内，**不能重复相加**。
+- 列出各数据源的关系，以及当前无法解释的部分。
+
+每个候选新增三行固定解释：
+
+- 这是什么：该分类的含义。
+- 为什么列出：命中的主要理由。
+- 删除影响：删除后会发生什么、哪些内容不受影响。
+
+这些解释只提高可读性，不改变风险等级、可选择性与文件清单；`analysis-summary.json` 的每个 item 也带 `explain` 字段。
+
+真机示例（HONOR HLK-AL00）：
+
+> 设备已用 78.81 GB，共享存储文件扫描 11.08 GB（占已用空间 14.1%），加上基础 APK 后仍有 58.75 GB 未解释。
+
 ### 命令总表
 
 | 命令 | 用途 | 修改设备 |
@@ -561,7 +582,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.5.0 实测：228 passed, 1 skipped（229 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。MediaStore 11 个、应用级存储 6 个自动化测试，均已在 1 台真机完成只读验证。
+2026-11-09 / v1.6.0 实测：233 passed, 1 skipped（234 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

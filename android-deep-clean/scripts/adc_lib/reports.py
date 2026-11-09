@@ -44,8 +44,8 @@ def _storage_lines(storage: dict[str, Any], coverage: dict[str, Any]) -> list[st
         lines.append(f"| 去重后扫描大小 / 设备已用 | {float(ratio) * 100:.1f}% | 块占用与逻辑大小口径不同，仅作参考 |")
     if unexplained.get("used_minus_scan_bytes") is not None:
         lines.append(
-            f"| 未由文件扫描解释 | {unexplained.get('used_minus_scan_human') or '-'} | "
-            "包含应用内部数据、系统数据、未扫描区域和文件系统开销，不能当作可回收空间 |"
+            f"| 未由文件扫描解释（仅共享存储） | {unexplained.get('used_minus_scan_human') or '-'} | "
+            "设备已用 − 共享存储文件扫描；不含基础 APK。口径说明见上方「空间去向速览」 |"
         )
     lines += ["", unexplained.get("note") or "", ""]
     largest = coverage.get("largest_dirs") or []
@@ -152,6 +152,58 @@ def _media_lines(media: dict[str, Any]) -> list[str]:
         lines += ["媒体索引限制：", ""]
         lines += [f"- {md_escape(str(item))}" for item in limitations]
         lines.append("")
+    return lines
+
+
+_RELATION_LABELS = {
+    "total": "设备总量",
+    "disjoint-with-apk": "与 APK 不重叠",
+    "disjoint-with-file-scan": "与文件扫描不重叠",
+    "subset-of-file-scan": "包含在文件扫描内",
+    "overlaps-file-scan": "与文件扫描重叠",
+}
+
+
+def _space_story_lines(story: dict[str, Any]) -> list[str]:
+    if not story:
+        return []
+    lines = [
+        "## 空间去向速览",
+        "",
+        f"> {md_escape(str(story.get('headline') or ''))}",
+        "",
+        "| 项目 | 大小 | 统计口径 | 与其它数据的关系 |",
+        "|---|---:|---|---|",
+    ]
+    for item in story.get("items") or []:
+        relation = _RELATION_LABELS.get(str(item.get("relation") or ""), "-")
+        lines.append(
+            f"| {md_escape(str(item.get('label') or ''))} | {item.get('human') or '-'} | "
+            f"{md_escape(str(item.get('measure') or ''))}；{md_escape(str(item.get('scope') or ''))} | "
+            f"{relation} |"
+        )
+    known = story.get("known_disjoint_human")
+    unexplained = story.get("unexplained_human")
+    if known:
+        lines.append(
+            f"| **已知且不重叠合计** | **{known}** | 文件扫描 + 基础 APK | 可与设备已用空间比较 |"
+        )
+    if unexplained:
+        lines.append(
+            f"| **未解释差额** | **{unexplained}** | 设备已用 − 已知不重叠 | "
+            "含应用内部数据、系统分区、未扫描区域和文件系统开销 |"
+        )
+    lines += ["", "**为什么不能相加**：", ""]
+    lines += [f"- {md_escape(str(item))}" for item in story.get("caveats") or []]
+    lines += ["", "各数据源的关系：", ""]
+    lines += [
+        "- 文件扫描：共享存储内真实存在、本轮能读到的文件。",
+        "- 应用外部目录：`Android/data|media|obb`，已经包含在文件扫描里。",
+        "- 媒体索引：系统媒体库条目，绝大多数也包含在文件扫描里。",
+        "- 基础 APK：位于 `/data/app` 与系统分区，不在 `/sdcard` 扫描范围内。",
+        "- 应用内部 data/cache：普通 ADB shell 读不到，目前无法纳入任何一边。",
+        "",
+    ]
     return lines
 
 
@@ -338,6 +390,7 @@ def analysis_markdown(analysis: dict[str, Any], config: dict[str, Any]) -> str:
         f"- 需要 AI/人工复核：{summary.get('review_required', 0)} 组",
         "",
     ]
+    lines += _space_story_lines(summary.get("space_story") or {})
     lines += _storage_lines(summary.get("storage") or {}, summary.get("coverage") or {})
     lines += _media_lines(summary.get("media_index") or {})
     lines += _app_storage_lines(summary.get("app_storage") or {})
@@ -382,6 +435,13 @@ def analysis_markdown(analysis: dict[str, Any], config: dict[str, Any]) -> str:
                 f"- 文件 {item.get('file_count', 0)} 个，目录 {item.get('dir_count', 0)} 个，"
                 f"逻辑大小 {item.get('human_size', human_bytes(item.get('total_bytes', 0)))}"
             )
+            explain = item.get("explain") or {}
+            if explain.get("what"):
+                lines.append(f"- 这是什么：{md_escape(str(explain['what']))}")
+            if explain.get("why"):
+                lines.append(f"- 为什么列出：{md_escape(str(explain['why']))}")
+            if explain.get("impact"):
+                lines.append(f"- 删除影响：{md_escape(str(explain['impact']))}")
             lines.append("- 路径示例：")
             for path in (item.get("sample_paths") or [])[:8]:
                 lines.append(f"  - {md_code(safe_display_path(path))}")

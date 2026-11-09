@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.5.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.6.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -417,6 +417,21 @@ It runs `pm list packages -f` and batched `stat`, writes `scan/aux/app-storage.j
 
 Real-device result (HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. Internal data/cache were not read; no files were modified.
 
+### Space story and candidate explanations (v1.6.0)
+
+`report-before.md` now opens with a "Space story" section that does the bookkeeping for the reader:
+
+- Lists device used, file scan, base APK, app external directories and media index, each with its own measurement.
+- Marks whether each row overlaps another one.
+- Gives a "known and non-overlapping total" (file scan + base APK) and an "unexplained gap".
+- States explicitly that app external directories and the media index are already inside the file scan and must not be added again.
+
+Every candidate also gets three fixed lines: what it is, why it was listed, and what deleting it changes. These are readability-only and do not alter risk, selectability or the file manifest; `analysis-summary.json` items carry the same `explain` field.
+
+Real-device example (HONOR HLK-AL00):
+
+> Device used 78.81 GB; shared-storage scan 11.08 GB (14.1% of used); after adding base APKs, 58.75 GB remains unexplained.
+
 ### Command reference
 
 | Command | Purpose | Modifies the phone |
@@ -544,7 +559,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.5.0: 228 passed, 1 skipped (229 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it. MediaStore has 11 automated tests and app storage has 6; both passed one real-device read-only validation.
+Measured on 2026-11-09 / v1.6.0: 233 passed, 1 skipped (234 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

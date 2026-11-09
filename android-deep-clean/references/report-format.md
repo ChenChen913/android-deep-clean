@@ -76,6 +76,7 @@
     "coverage": {"status": "good", "reasons": []},
     "media_index": {"status": "partial", "index": {}, "crosscheck": {}},
     "app_storage": {"status": "collected", "known": {}, "unknown": {}, "top_external": []},
+    "space_story": {"headline": "...", "items": [], "known_disjoint_human": "...", "unexplained_human": "...", "caveats": []},
     "directory_changes": {"baseline": false, "summary": {}, "grew": []}
   },
   "review_items": [
