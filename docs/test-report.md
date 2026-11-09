@@ -6,7 +6,7 @@
 |---|---|
 | 验证对象 | 本地工作区 v1.10.0 |
 | 本地 Mock | 281 passed / 2 skipped（283 collected） |
-| CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
+| CI | 已通过：ubuntu-22.04 / windows-latest × Python 3.9 / 3.13，4 个作业全部成功 |
 | 本轮改动 | 隐藏缓存规则、APK/split 与应用内部存储、MediaStore 零记录诊断、隔离区 realpath 守卫、HTML 移动端布局 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
 | 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
