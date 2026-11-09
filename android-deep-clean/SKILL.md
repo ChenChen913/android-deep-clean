@@ -190,6 +190,8 @@ python "$Skill\scripts\adc.py" execute --state $State --transport adb --token <�
 
 执行中任何文件变化、权限失败、符号链接都会跳过并写入 execution.json / 报告。不要重试为“强行删除”。
 
+执行完成后自动生成 `execution/report-cleanup.html`：把清理前发现、用户选择、逐项执行结果、失败路径、验证、隔离/删除/恢复和剩余问题串成一份可离线打开的报告。`verify`、`quarantine purge`、`restore` 后会重新渲染同一份报告，可直接展示给用户。
+
 ### 7. Verify 与报告
 
 ~~~powershell

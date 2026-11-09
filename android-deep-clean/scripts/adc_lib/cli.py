@@ -605,6 +605,7 @@ def cmd_execute(args: Any, config: dict[str, Any]) -> int:
             print(f"- 电脑备份：{execution.get('backup_files')} 个 / {human_bytes(execution.get('backup_bytes', 0))} -> {execution.get('backup_root')}")
         print(f"- Purge 令牌：{execution.get('purge_token')}")
         print(f"- 报告：{state.get_file('execution_report')}")
+        print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
         if execution.get("status") == "aborted":
             print(f"⚠ 执行已中止：{execution.get('abort_reason') or '设备断开'}")
         elif execution.get("status") != "completed":
@@ -624,6 +625,7 @@ def cmd_verify(args: Any, config: dict[str, Any]) -> int:
         print("验证完成")
         print(f"- 检查 {summary.get('checked', 0)}；通过 {summary.get('passed', 0)}；失败 {summary.get('failed', 0)}")
         print(f"- 报告：{state.get_file('verification_report')}")
+        print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
         if summary.get("failed"):
             print("⚠ 存在异常，请查看报告。")
     return 0 if not summary.get("failed") else 6
@@ -640,6 +642,7 @@ def cmd_purge(args: Any, config: dict[str, Any]) -> int:
         print(f"- 永久删除：{result.get('purged_files', 0)} 个 / {human_bytes(result.get('purged_bytes', 0))}")
         print(f"- 失败：{result.get('failed', 0)}")
         print(f"- 可用空间变化：{human_bytes(result.get('free_delta', 0))}")
+        print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
     return 0 if not result.get("failed") else 6
 
 
@@ -653,6 +656,7 @@ def cmd_restore(args: Any, config: dict[str, Any]) -> int:
         print("恢复完成")
         print(f"- 已恢复：{result.get('restored_files', 0)} 个 / {human_bytes(result.get('restored_bytes', 0))}")
         print(f"- 失败：{result.get('failed', 0)}")
+        print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
     return 0 if not result.get("failed") else 6
 
 

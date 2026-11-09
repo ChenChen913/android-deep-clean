@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.8.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.9.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -441,7 +441,7 @@ After a successful `execute`, the token hash is recorded in `execution/consumed-
 - continuing requires a fresh `scan → analyze → plan → select` and a new user confirmation;
 - all five existing gates remain: `plan_hash`, `selection_hash`, device identity, file-manifest digest, and the per-file pre-execution `stat` check.
 
-### Visual HTML report (v1.8.0)
+### Visual HTML reports (v1.8.0+)
 
 `analyze` also writes `analysis/report-before.html`, which opens directly in a browser with no network access, scripts, fonts or other external assets:
 
@@ -450,7 +450,14 @@ After a successful `execute`, the token hash is recorded in `execution/consumed-
 - Candidates are collapsible; each shows what it is, why it was listed, what deleting it changes, sample paths, evidence and keep suggestions.
 - Protected items, limitations and the safety boundary are listed separately, and the footer repeats that nothing has been deleted.
 
-The report is rendered on the host, never touches the device, HTML-escapes every path and evidence string, and shows at most 400 candidates per run (the full manifest stays in `analysis.db`). It does not change candidates, risks or selectability, and it is not deletion authorization.
+After execution, `execution/report-cleanup.html` is written and refreshed by `verify`, `quarantine purge` and `restore`. It turns the whole run into one archive:
+
+- Process timeline: pre-clean findings → user selection → execution → verification → release or restore.
+- The selected items, per-item execution results, failed paths and reasons.
+- Verification stats and anomalies, quarantine occupancy, purge/restore results and free-space records.
+- Remaining issues, suggested commands and safety notes; unverified steps are never shown as passed.
+
+Both reports are rendered on the host, never touch the device, HTML-escape every path and evidence string, and show at most 400 candidates per run (the full manifest stays in `analysis.db`). They contain the device serial and file paths; redact before sharing. They do not change candidates, risks or selectability, and they are not deletion authorization.
 
 ### Command reference
 
@@ -579,7 +586,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.8.0: 241 passed, 1 skipped (242 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.9.0: 247 passed, 1 skipped (248 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

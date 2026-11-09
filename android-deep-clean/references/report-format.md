@@ -47,6 +47,7 @@
   execution/journal.jsonl        逐文件移动/删除/失败记录
   execution/execution.json       执行汇总 + purge_token
   execution/report-after.md
+  execution/report-cleanup.html  清理结果可视化报告（执行/验证/释放/恢复后更新）
   execution/verification.json
   execution/report-verify.md
   execution/report-purge.md

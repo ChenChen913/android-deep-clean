@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .device import transport_device_identity
+from .html_report import write_cleanup_html
 from .reports import execution_markdown, verification_markdown
 from .platform import match_harmony_photo_root
 from .rules import guard_path
@@ -347,6 +348,7 @@ class Executor:
             (self.exec_dir / "report-after.md").write_text(f"# 报告渲染失败\n\n{exc}\n", encoding="utf-8")
         self.state.set_file("execution", self.exec_dir / "execution.json")
         self.state.set_file("execution_report", self.exec_dir / "report-after.md")
+        _write_cleanup_html(self.state, execution)
         return execution
 
     def _safe_df(self) -> dict[str, Any]:
@@ -676,6 +678,44 @@ def load_execution(state: State) -> tuple[dict[str, Any], str]:
     return execution, str(path)
 
 
+def _load_optional_json(path_value: str) -> dict[str, Any]:
+    if not path_value:
+        return {}
+    path = Path(path_value)
+    if not path.exists():
+        return {}
+    data = read_json(path, default=None)
+    return data if isinstance(data, dict) else {}
+
+
+def _write_cleanup_html(
+    state: State,
+    execution: dict[str, Any],
+    verification: dict[str, Any] | None = None,
+) -> Path:
+    """Write the visual cleanup archive without ever failing the real operation."""
+    out_dir = state.dir("execution")
+    path = out_dir / "report-cleanup.html"
+    analysis = _load_optional_json(state.get_file("analysis_summary"))
+    selection = _load_optional_json(state.get_file("selection"))
+    if verification is None:
+        verification = _load_optional_json(state.get_file("verification"))
+    try:
+        write_cleanup_html(analysis, selection, execution, verification, path)
+    except Exception as exc:  # noqa: BLE001 - a rendering bug must not fail a completed cleanup
+        import html as html_module
+
+        path.write_text(
+            "<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+            "<title>清理结果报告</title></head><body><h1>报告渲染失败</h1><p>"
+            + html_module.escape(str(exc))
+            + "</p><p>请查看 execution/report-after.md、execution.json 与 journal.jsonl。</p></body></html>\n",
+            encoding="utf-8",
+        )
+    state.set_file("cleanup_report_html", path)
+    return path
+
+
 def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[str, Any]:
     execution, execution_path = load_execution(state)
     journal_path = execution.get("journal_path") or ""
@@ -771,6 +811,7 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
     execution["verification_path"] = str(out_dir / "verification.json")
     execution["verification_summary"] = verification["summary"]
     atomic_write_json(execution_path, execution)
+    _write_cleanup_html(state, execution, verification)
     return verification
 
 
@@ -866,6 +907,7 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")
     (out_dir / "report-purge.md").write_text("\n".join(lines), encoding="utf-8")
+    _write_cleanup_html(state, execution)
     return execution["purge"]
 
 
@@ -934,4 +976,5 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")
     (out_dir / "report-restore.md").write_text("\n".join(lines), encoding="utf-8")
+    _write_cleanup_html(state, execution)
     return execution["restore"]

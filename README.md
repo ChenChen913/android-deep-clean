@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.8.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.9.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -459,7 +459,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 需要继续清理时必须重新 `scan → analyze → plan → select`，让用户重新确认；
 - 五个安全闸门仍然全部保留：`plan_hash`、`selection_hash`、设备身份、文件清单摘要、执行前逐文件 stat。
 
-### 可视化 HTML 报告（v1.8.0）
+### 可视化 HTML 报告（v1.8.0 起）
 
 `analyze` 会额外生成 `analysis/report-before.html`，用浏览器直接打开即可，不需要联网、不加载任何外部脚本或字体：
 
@@ -468,7 +468,14 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 清理候选可折叠展开，每条包含“这是什么 / 为什么列出 / 删除影响”、路径示例、证据与保留建议。
 - 受保护内容、限制与安全边界单独列出，页脚再次声明“只读分析、尚未删除任何文件”。
 
-报告是主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。HTML 不改变候选、风险或可选择性，也不构成删除授权。
+执行完成后还会生成 `execution/report-cleanup.html`，并在 `verify`、`quarantine purge`、`restore` 后自动更新，把整个清理过程串成一份档案：
+
+- 清理过程时间线：清理前发现 → 用户选择 → 执行 → 验证 → 释放或恢复。
+- 用户选择的项目、逐项执行结果、失败路径与原因。
+- 验证统计与异常、隔离区占用、purge / restore 结果、可用空间记录。
+- 剩余问题、后续命令与安全说明；未验证的步骤不会显示为通过。
+
+两份报告都在主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。报告包含设备序列号与文件路径，分享前请自行脱敏。HTML 不改变候选、风险或可选择性，也不构成删除授权。
 
 ### 命令总表
 
@@ -602,7 +609,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.8.0 实测：241 passed, 1 skipped（242 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.9.0 实测：247 passed, 1 skipped（248 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

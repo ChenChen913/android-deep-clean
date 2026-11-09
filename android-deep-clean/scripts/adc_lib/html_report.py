@@ -502,10 +502,512 @@ def _limitations_section(summary: dict[str, Any], analysis: dict[str, Any]) -> s
         "<li>扫描与分析全程只读；本报告不代表已经删除任何内容。</li>"
         "<li>候选必须经过 AI 复核、用户选择、确认令牌与执行前文件校验。</li>"
         "<li>媒体索引、应用级存储与目录档案只作为证据，不授权删除。</li>"
+        "<li>本报告包含设备序列号与文件路径；分享前请自行脱敏。</li>"
         "</ul></div>"
     )
     parts.append("</section>")
     return "".join(parts)
+
+
+# ---------------------------------------------------------------- cleanup result
+_CLEAN_STATUS = {
+    "completed": ("已完成", "safe"),
+    "partial": ("部分完成", "caution"),
+    "aborted": ("已中止", "danger"),
+    "purged": ("已永久释放", "safe"),
+}
+_ITEM_STATUS = {
+    "success": ("成功", "safe"),
+    "partial": ("部分成功", "caution"),
+    "failed": ("失败", "danger"),
+    "aborted": ("已中止", "danger"),
+}
+_MODE_LABEL = {"quarantine": "隔离（可恢复）", "delete": "永久删除"}
+
+
+def _signed_size(value: Any) -> str:
+    number = _num(value)
+    return ("+" if number >= 0 else "-") + human_bytes(abs(number))
+
+
+def _cards(pairs: list[tuple[str, Any]]) -> str:
+    body = "".join(
+        f'<div class="card"><div class="k">{_e(label)}</div><div class="v">{_e(value)}</div></div>'
+        for label, value in pairs
+    )
+    return f'<div class="grid stats">{body}</div>'
+
+
+def render_cleanup_html(
+    analysis: dict[str, Any] | None,
+    selection: dict[str, Any] | None,
+    execution: dict[str, Any],
+    verification: dict[str, Any] | None = None,
+) -> str:
+    """Render the post-clean archive from already-recorded state.
+
+    Pure rendering: no device access, no external assets.  It reports what
+    actually happened and never upgrades a failed or unverified step.
+    """
+    analysis = analysis or {}
+    selection = selection or {}
+    verification = verification or {}
+    summary = analysis.get("summary") or {}
+    device = summary.get("device") or {}
+    identity = execution.get("device_identity") or {}
+    ex = execution.get("summary") or {}
+    sel = selection.get("summary") or {}
+    verify = verification.get("summary") or {}
+    purge = execution.get("purge") or {}
+    restore = execution.get("restore") or {}
+    status = str(execution.get("status") or "")
+    status_label, status_class = _CLEAN_STATUS.get(status, (status or "-", "caution"))
+    mode = str(execution.get("mode") or selection.get("mode") or "")
+
+    parts: list[str] = [
+        "<!DOCTYPE html>",
+        '<html lang="zh-CN">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        "<title>清理结果报告</title>",
+        f"<style>{_CSS}</style>",
+        "</head>",
+        "<body>",
+        '<main class="wrap">',
+    ]
+
+    parts.append(
+        '<header class="hero">'
+        "<h1>清理结果报告</h1>"
+        f'<p class="sub"><span class="badge {status_class}">{_e(status_label)}</span> '
+        f"模式：{_e(_MODE_LABEL.get(mode, mode or '-'))} · 本报告记录已经发生的操作，不是建议清单</p>"
+        "</header>"
+    )
+
+    model = " ".join(
+        value for value in (str(device.get("manufacturer") or ""), str(device.get("model") or "")) if value
+    ).strip()
+    parts.append(
+        _cards([
+            ("设备", model or identity.get("serial") or "-"),
+            ("平台", execution.get("platform") or analysis.get("platform") or "-"),
+            ("传输方式", execution.get("transport") or "-"),
+            ("执行 ID", execution.get("execution_id") or "-"),
+            ("开始", execution.get("started_at") or "-"),
+            ("结束", execution.get("finished_at") or "-"),
+            ("验证", "已运行" if verify else "未运行"),
+            ("隔离区", execution.get("quarantine_root") or "-"),
+        ])
+    )
+
+    cards: list[tuple[str, Any]] = [
+        ("用户选择", f"{_num(sel.get('groups'))} 组 / {_num(sel.get('files'))} 个"),
+        ("成功文件", f"{_num(ex.get('success_files'))} 个"),
+        ("失败文件", f"{_num(ex.get('failed_files'))} 个"),
+        ("处理逻辑大小", human_bytes(_num(ex.get('processed_bytes')))),
+        ("已释放", human_bytes(_num(ex.get('released_bytes')))),
+        ("隔离区占用", human_bytes(_num(ex.get('quarantine_occupied_bytes')))),
+        ("可用空间变化", _signed_size(ex.get("df_delta_bytes"))),
+    ]
+    if verify:
+        cards.append(("验证通过", f"{_num(verify.get('passed'))} / {_num(verify.get('checked'))}"))
+    if purge:
+        cards.append(("永久删除", f"{_num(purge.get('purged_files'))} 个 / {human_bytes(_num(purge.get('purged_bytes')))}"))
+    if restore:
+        cards.append(("已恢复", f"{_num(restore.get('restored_files'))} 个 / {human_bytes(_num(restore.get('restored_bytes')))}"))
+    parts.append(_cards(cards))
+
+    parts.append(_cleanup_process(summary, sel, execution, verify, purge, restore, mode))
+    parts.append(_cleanup_selection(selection, mode))
+    parts.append(_cleanup_execution(execution, selection))
+    parts.append(_cleanup_verification(verification))
+    parts.append(_cleanup_release(execution, verification))
+    parts.append(_cleanup_background(summary))
+    parts.append(_cleanup_next(execution, verification))
+    parts.append(
+        '<footer class="foot">'
+        "本报告由 android-deep-clean 生成，记录一次已经执行的操作。"
+        "本报告包含设备序列号与文件路径，分享前请自行脱敏。"
+        "</footer>"
+    )
+    parts += ["</main>", "</body>", "</html>", ""]
+    return "\n".join(parts)
+
+
+def write_cleanup_html(
+    analysis: dict[str, Any] | None,
+    selection: dict[str, Any] | None,
+    execution: dict[str, Any],
+    verification: dict[str, Any] | None,
+    path: Path,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_cleanup_html(analysis, selection, execution, verification), encoding="utf-8")
+    return path
+
+
+def _cleanup_process(
+    summary: dict[str, Any],
+    sel: dict[str, Any],
+    execution: dict[str, Any],
+    verify: dict[str, Any],
+    purge: dict[str, Any],
+    restore: dict[str, Any],
+    mode: str,
+) -> str:
+    ex = execution.get("summary") or {}
+    steps: list[tuple[str, str]] = [
+        (
+            "清理前分析",
+            f"{_num(summary.get('candidate_groups'))} 组候选 / {_num(summary.get('candidate_files'))} 个文件 / "
+            f"{human_bytes(_num(summary.get('candidate_bytes')))}；需要复核 {_num(summary.get('review_required'))} 组。",
+        ),
+        (
+            "用户选择",
+            f"{_num(sel.get('groups'))} 组 / {_num(sel.get('files'))} 个文件 / "
+            f"{sel.get('human_bytes') or human_bytes(_num(sel.get('bytes')))}；"
+            f"模式：{_MODE_LABEL.get(mode, mode or '-')}。",
+        ),
+        (
+            "执行",
+            f"成功 {_num(ex.get('success_files'))} 个，失败 {_num(ex.get('failed_files'))} 个；"
+            f"处理逻辑大小 {human_bytes(_num(ex.get('processed_bytes')))}。",
+        ),
+    ]
+    if verify:
+        steps.append((
+            "验证",
+            f"检查 {_num(verify.get('checked'))}，通过 {_num(verify.get('passed'))}，"
+            f"失败 {_num(verify.get('failed'))}。",
+        ))
+    else:
+        steps.append(("验证", "尚未运行 verify；当前执行结果还没有经过独立核对。"))
+    if purge:
+        steps.append((
+            "释放空间",
+            f"永久删除 {_num(purge.get('purged_files'))} 个 / {human_bytes(_num(purge.get('purged_bytes')))}；"
+            f"可用空间变化 {_signed_size(purge.get('free_delta'))}。",
+        ))
+    if restore:
+        steps.append((
+            "恢复文件",
+            f"已恢复 {_num(restore.get('restored_files'))} 个 / {human_bytes(_num(restore.get('restored_bytes')))}；"
+            f"失败 {_num(restore.get('failed'))}。",
+        ))
+    if not purge and not restore and mode == "quarantine":
+        steps.append(("空间状态", "隔离区仍占用设备空间；尚未 purge 时 released_bytes=0 是正确结果。"))
+    rows = "".join(
+        f'<li><span class="stepnum">{index}</span><div><strong>{_e(title)}</strong><p>{_e(detail)}</p></div></li>'
+        for index, (title, detail) in enumerate(steps, start=1)
+    )
+    return (
+        '<section id="process" class="block"><h2>清理过程</h2>'
+        f'<ol class="steps">{rows}</ol></section>'
+    )
+
+
+def _cleanup_selection(selection: dict[str, Any], mode: str) -> str:
+    items = selection.get("items") or []
+    summary = selection.get("summary") or {}
+    parts = [
+        '<section id="selection" class="block">',
+        "<h2>用户选择了什么</h2>",
+        f'<p class="lead">模式：{_e(_MODE_LABEL.get(mode, mode or "-"))}；'
+        f'共 {_num(summary.get("groups"))} 组 / {_num(summary.get("files"))} 个文件 / '
+        f'{_e(summary.get("human_bytes") or human_bytes(_num(summary.get("bytes"))))}。</p>',
+    ]
+    if not items:
+        parts.append('<div class="note">没有找到选择清单；本报告只能依据执行记录还原范围。</div>')
+    else:
+        parts.append('<div class="scroll"><table><thead><tr>'
+                     '<th>候选</th><th>分类</th><th>风险</th><th>动作</th>'
+                     '<th class="r">文件</th><th class="r">逻辑大小</th></tr></thead><tbody>')
+        for item in items[:200]:
+            risk = str(item.get("risk") or "CAUTION")
+            parts.append(
+                f'<tr><td>{_e(item.get("title") or item.get("id"))}</td>'
+                f'<td>{_e(item.get("category_title") or item.get("category"))}</td>'
+                f'<td><span class="badge {_RISK_CLASS.get(risk, "caution")}">{_e(risk)}</span></td>'
+                f'<td><code>{_e(item.get("action"))}</code></td>'
+                f'<td class="r">{_num(item.get("file_count"))}</td>'
+                f'<td class="r">{_e(item.get("human_size") or human_bytes(_num(item.get("total_bytes"))))}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+        if len(items) > 200:
+            parts.append(f'<div class="note">仅显示前 200 组；完整选择清单见 selection.json。</div>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _cleanup_execution(execution: dict[str, Any], selection: dict[str, Any]) -> str:
+    titles = {
+        item.get("id"): item.get("title") or item.get("id")
+        for item in selection.get("items") or []
+    }
+    results = execution.get("items") or []
+    failures = execution.get("failures") or []
+    parts = ['<section id="execution" class="block">', "<h2>实际执行了什么</h2>"]
+    if not results:
+        parts.append('<div class="note">执行记录中没有项目明细。</div>')
+    else:
+        parts.append('<div class="scroll"><table><thead><tr>'
+                     '<th>候选</th><th>分类</th><th>状态</th><th class="r">成功</th>'
+                     '<th class="r">失败</th><th class="r">处理大小</th><th>说明</th></tr></thead><tbody>')
+        for item in results[:200]:
+            item_status = str(item.get("status") or "")
+            label, css = _ITEM_STATUS.get(item_status, (item_status or "-", "caution"))
+            parts.append(
+                f'<tr><td>{_e(titles.get(item.get("id")) or item.get("id"))}</td>'
+                f'<td>{_e(item.get("category"))}</td>'
+                f'<td><span class="badge {css}">{_e(label)}</span></td>'
+                f'<td class="r">{_num(item.get("success_count"))}</td>'
+                f'<td class="r">{_num(item.get("failed_count"))}</td>'
+                f'<td class="r">{human_bytes(_num(item.get("processed_bytes")))}</td>'
+                f'<td>{_e(item.get("error") or "-")}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+        if len(results) > 200:
+            parts.append('<div class="note">仅显示前 200 组；完整明细见 execution.json。</div>')
+
+    if execution.get("abort_reason"):
+        parts.append(
+            f'<div class="note warn"><strong>执行中止</strong><p>{_e(execution.get("abort_reason"))}。'
+            "未执行的项目保持原状。</p></div>"
+        )
+    if failures:
+        parts.append('<h3>失败项目（未删除，仍留在原位置）</h3>'
+                     '<div class="scroll"><table><thead><tr>'
+                     '<th>路径</th><th>原因</th><th>候选</th></tr></thead><tbody>')
+        for failure in failures[:50]:
+            parts.append(
+                f'<tr><td><code>{_e(failure.get("path"))}</code></td>'
+                f'<td>{_e(failure.get("reason"))}</td>'
+                f'<td>{_e(titles.get(failure.get("item")) or failure.get("item") or "-")}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+        if len(failures) > 50:
+            parts.append(f'<div class="note">另有 {len(failures) - 50} 条失败记录，见 execution.json。</div>')
+    elif not execution.get("abort_reason"):
+        parts.append('<div class="note">本次执行没有文件级失败。</div>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _cleanup_verification(verification: dict[str, Any]) -> str:
+    summary = verification.get("summary") or {}
+    parts = ['<section id="verify" class="block">', "<h2>验证结果</h2>"]
+    if not verification:
+        parts.append(
+            '<div class="note">本次执行后尚未运行 verify。'
+            "建议运行 <code>verify</code>，确认源文件已消失、隔离文件仍然存在且大小一致。</div>"
+        )
+        parts.append("</section>")
+        return "".join(parts)
+    parts.append(
+        _cards([
+            ("检查", f"{_num(summary.get('checked'))}"),
+            ("通过", f"{_num(summary.get('passed'))}"),
+            ("失败", f"{_num(summary.get('failed'))}"),
+            ("源文件仍存在", f"{_num(summary.get('source_present'))}"),
+            ("隔离文件缺失", f"{_num(summary.get('quarantine_missing'))}"),
+            ("可用空间变化", _signed_size(summary.get("free_delta"))),
+        ])
+    )
+    failures = verification.get("failures") or []
+    if failures:
+        parts.append('<h3>验证异常</h3><div class="scroll"><table><thead><tr>'
+                     '<th>路径</th><th>原因</th></tr></thead><tbody>')
+        for failure in failures[:50]:
+            parts.append(
+                f'<tr><td><code>{_e(failure.get("path"))}</code></td>'
+                f'<td>{_e(failure.get("reason"))}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+        if len(failures) > 50:
+            parts.append(f'<div class="note">另有 {len(failures) - 50} 条，见 verification.json。</div>')
+    else:
+        parts.append('<div class="note">所有检查项通过。</div>')
+    if verification.get("note"):
+        parts.append(f'<div class="note">{_e(verification.get("note"))}</div>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) -> str:
+    mode = str(execution.get("mode") or "")
+    purge = execution.get("purge") or {}
+    restore = execution.get("restore") or {}
+    ex = execution.get("summary") or {}
+    parts = ['<section id="release" class="block">', "<h2>隔离区、释放与恢复</h2>"]
+
+    if mode == "quarantine":
+        parts.append(
+            _cards([
+                ("隔离区", execution.get("quarantine_root") or "-"),
+                ("隔离文件", f"{_num(ex.get('quarantine_files'))} 个"),
+                ("隔离占用", human_bytes(_num(ex.get("quarantine_bytes")))),
+                ("电脑备份", f"{_num(ex.get('backup_files'))} 个 / {human_bytes(_num(ex.get('backup_bytes')))}"),
+            ])
+        )
+        parts.append(
+            '<div class="note">隔离区仍位于手机上，会继续占用空间；它不是电脑备份。'
+            "确认无误后再 purge。</div>"
+        )
+    else:
+        parts.append(
+            '<div class="note warn">本次使用永久删除模式，文件不可恢复；'
+            "released_bytes 是删除文件逻辑大小的估算。</div>"
+        )
+
+    if purge:
+        parts.append('<h3>永久释放（purge）</h3>')
+        parts.append(
+            _cards([
+                ("永久删除", f"{_num(purge.get('purged_files'))} 个"),
+                ("删除逻辑大小", human_bytes(_num(purge.get("purged_bytes")))),
+                ("失败", f"{_num(purge.get('failed'))}"),
+                ("可用空间变化", _signed_size(purge.get("free_delta"))),
+            ])
+        )
+        purge_failures = purge.get("failures") or []
+        if purge_failures:
+            parts.append('<div class="scroll"><table><thead><tr>'
+                         '<th>隔离路径</th><th>原因</th></tr></thead><tbody>')
+            for failure in purge_failures[:30]:
+                parts.append(
+                    f'<tr><td><code>{_e(failure.get("path"))}</code></td>'
+                    f'<td>{_e(failure.get("reason"))}</td></tr>'
+                )
+            parts.append("</tbody></table></div>")
+    elif mode == "quarantine":
+        parts.append(
+            '<div class="note">尚未 purge：隔离文件仍占用设备空间，'
+            f"released_bytes={human_bytes(_num(ex.get('released_bytes')))} 是正确结果。</div>"
+        )
+
+    if restore:
+        parts.append('<h3>恢复（restore）</h3>')
+        parts.append(
+            _cards([
+                ("已恢复", f"{_num(restore.get('restored_files'))} 个"),
+                ("恢复逻辑大小", human_bytes(_num(restore.get("restored_bytes")))),
+                ("失败", f"{_num(restore.get('failed'))}"),
+            ])
+        )
+        restore_failures = restore.get("failures") or []
+        if restore_failures:
+            parts.append('<div class="scroll"><table><thead><tr>'
+                         '<th>路径</th><th>原因</th></tr></thead><tbody>')
+            for failure in restore_failures[:30]:
+                parts.append(
+                    f'<tr><td><code>{_e(failure.get("path"))}</code></td>'
+                    f'<td>{_e(failure.get("reason"))}</td></tr>'
+                )
+            parts.append("</tbody></table></div>")
+    elif mode == "quarantine" and not purge:
+        parts.append('<div class="note">如需恢复，可运行 <code>restore --all</code> 或按候选 ID 恢复。</div>')
+
+    free_rows: list[tuple[str, str]] = []
+    for label, data in (
+        ("执行前可用空间", execution.get("free_before")),
+        ("执行后可用空间", execution.get("free_after")),
+        ("验证时可用空间", verification.get("free_now")),
+    ):
+        if isinstance(data, dict) and data.get("available_bytes") is not None:
+            free_rows.append((label, human_bytes(_num(data.get("available_bytes")))))
+    if free_rows:
+        free_rows.append(("执行期间变化", _signed_size(ex.get("df_delta_bytes"))))
+        if purge:
+            free_rows.append(("purge 后变化", _signed_size(purge.get("free_delta"))))
+        parts.append('<h3>可用空间记录</h3><div class="scroll"><table><thead><tr>'
+                     '<th>时间点</th><th class="r">可用空间</th></tr></thead><tbody>')
+        for label, value in free_rows:
+            parts.append(f'<tr><td>{_e(label)}</td><td class="r">{_e(value)}</td></tr>')
+        parts.append("</tbody></table></div>")
+        parts.append('<div class="note">可用空间受系统写入、日志与缓存影响，短时间内的负变化不一定是清理失败。</div>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _cleanup_background(summary: dict[str, Any]) -> str:
+    categories = summary.get("categories") or []
+    parts = ['<section id="background" class="block">', "<h2>清理前发现了什么</h2>"]
+    parts.append(
+        f'<p class="lead">共 {_num(summary.get("candidate_groups"))} 组 / '
+        f'{_num(summary.get("candidate_files"))} 个文件 / '
+        f'{human_bytes(_num(summary.get("candidate_bytes")))}；'
+        f'需复核 {_num(summary.get("review_required"))} 组。</p>'
+    )
+    if categories:
+        parts.append('<div class="scroll"><table><thead><tr><th>分类</th><th class="r">组数</th>'
+                     '<th class="r">文件</th><th class="r">逻辑大小</th><th>最高风险</th></tr></thead><tbody>')
+        for row in categories:
+            risk = str(row.get("risk") or "SAFE")
+            parts.append(
+                f'<tr><td>{_e(row.get("title"))}</td><td class="r">{_num(row.get("groups"))}</td>'
+                f'<td class="r">{_num(row.get("files"))}</td>'
+                f'<td class="r">{human_bytes(_num(row.get("bytes")))}</td>'
+                f'<td><span class="badge {_RISK_CLASS.get(risk, "caution")}">{_e(risk)}</span></td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append('<div class="note">没有找到清理前分析摘要；本报告只依据执行记录。</div>')
+    parts.append('<div class="note">完整的清理前报告见 <code>analysis/report-before.html</code> 或 '
+                 "<code>analysis/report-before.md</code>。</div>")
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _cleanup_next(execution: dict[str, Any], verification: dict[str, Any]) -> str:
+    ex = execution.get("summary") or {}
+    verify = verification.get("summary") or {}
+    mode = str(execution.get("mode") or "")
+    purge = execution.get("purge") or {}
+    restore = execution.get("restore") or {}
+    parts = ['<section id="next" class="block">', "<h2>剩余问题与下一步</h2>"]
+    items: list[str] = []
+    if _num(ex.get("failed_files")):
+        items.append(f"有 {_num(ex.get('failed_files'))} 个文件失败，仍留在原位置；请查看失败原因。")
+    if _num(verify.get("failed")):
+        items.append(f"验证有 {_num(verify.get('failed'))} 项异常，请先确认再继续清理或释放。")
+    if execution.get("abort_reason"):
+        items.append("执行曾经中止，未执行的项目保持原状。")
+    if mode == "quarantine" and not purge:
+        items.append("隔离区仍占用设备空间；确认无需恢复后再运行 quarantine purge。")
+    if purge:
+        items.append("已永久删除的隔离文件无法恢复；restore 只会恢复仍留在隔离区的文件。")
+    if restore:
+        items.append(f"已恢复 {_num(restore.get('restored_files'))} 个文件；隔离区剩余文件可继续恢复或 purge。")
+    if not items:
+        items.append("本轮没有发现需要额外处理的问题。")
+    parts.append("<ul>")
+    parts += [f"<li>{_e(item)}</li>" for item in items]
+    parts.append("</ul>")
+
+    warnings = execution.get("warnings") or []
+    if warnings:
+        parts.append('<div class="note warn"><strong>执行注意事项</strong><ul>')
+        parts += [f"<li>{_e(item)}</li>" for item in warnings]
+        parts.append("</ul></div>")
+
+    next_actions = execution.get("next_actions") or []
+    if next_actions:
+        parts.append('<div class="note"><strong>建议的后续命令</strong><ul>')
+        parts += [f"<li>{_e(item)}</li>" for item in next_actions]
+        parts.append("</ul></div>")
+
+    parts.append(
+        '<div class="note"><strong>安全说明</strong><ul>'
+        "<li>本报告只记录已经发生的操作，不会触发新的删除、移动或恢复。</li>"
+        "<li>失败项目没有静默忽略；未验证的步骤不会显示为通过。</li>"
+        "<li>隔离文件仍在手机上；电脑备份（如有）是独立副本，不是隔离区。</li>"
+        "<li>本报告包含设备序列号与文件路径；分享前请自行脱敏。</li>"
+        "</ul></div>"
+    )
+    parts.append("</section>")
+    return "".join(parts)
+
 
 
 _CSS = """
@@ -565,6 +1067,12 @@ details.cand[open]>summary::before{content:"▾"}
 .muted{color:var(--muted);font-size:13px;margin:10px 0 4px}
 ul.paths,ul.ev{margin:4px 0 8px;padding-left:20px;font-size:13px}
 ul.ev li{margin:2px 0}
+.steps{list-style:none;margin:6px 0 0;padding:0}
+.steps li{display:flex;gap:12px;padding:10px 0;border-bottom:1px dashed var(--line)}
+.steps li:last-child{border-bottom:0}
+.stepnum{flex:0 0 24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;
+font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.steps p{margin:2px 0 0;color:var(--muted);font-size:13px}
 .foot{color:var(--muted);font-size:12.5px;text-align:center;margin-top:28px}
 @media (prefers-color-scheme:dark){
 :root{--bg:#14171c;--panel:#1b1f26;--ink:#e6e9ee;--muted:#9aa3af;--line:#2a3038;

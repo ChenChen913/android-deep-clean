@@ -1,13 +1,13 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.8.0，2026-11-09）
+## 当前版本摘要（v1.9.0，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.8.0 |
-| 本地 Mock | 241 passed / 1 skipped（242 collected） |
+| 验证对象 | 本地工作区 v1.9.0 |
+| 本地 Mock | 247 passed / 1 skipped（248 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 本轮改动 | 新增可视化 HTML 分析报告（`analysis/report-before.html`）及 5 个测试 |
+| 本轮改动 | 新增清理结果 HTML 报告（`execution/report-cleanup.html`）及 6 个测试 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
 | 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
 | purge 真机结果 | 2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等（0 文件）；purge 后 restore 如实失败 |
@@ -23,6 +23,21 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.9.0 清理结果 HTML 报告（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| 生成时机 | `execute` 后生成；`verify` / `quarantine purge` / `restore` 后自动更新 |
+| 覆盖内容 | 清理过程时间线、用户选择、逐项执行结果、失败路径、验证、隔离/释放/恢复、空间记录、剩余问题 |
+| 验证方式 | mock 全链路：execute → verify → purge；以及 execute → restore |
+| 结果一致性 | 成功/失败数、隔离占用、purge/restore 数量与实际记录一致；未验证步骤显示“尚未运行 verify” |
+| 外部资源 | 0（无脚本、无字体、无 CDN） |
+| 转义测试 | 失败路径中的 `<img onerror=...>` 被转义，不生成标签 |
+| 降级测试 | 缺少 verify / selection 时不崩溃，并明确提示 |
+| 渲染失败隔离 | 报告渲染异常不会让已完成的清理返回失败；错误页保留，Markdown/JSON/journal 证据不受影响 |
+| 真实设备写操作 | 本轮未执行（未获得用户新的执行确认），真机写操作结论沿用 v1.7.1 |
+| 自动化测试 | 新增 6 个；全量 247 passed, 1 skipped |
 
 ### v1.8.0 可视化 HTML 报告（2026-11-09）
 

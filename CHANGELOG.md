@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.9.0 — 清理结果 HTML 报告
+
+### Added
+- `execute` 完成后生成 `execution/report-cleanup.html`，把清理流程串成一份档案：清理前发现 → 用户选择 → 实际执行 → 验证 → 隔离/永久删除/恢复 → 剩余问题。
+- `verify`、`quarantine purge`、`restore` 后自动重新渲染同一份报告，用户不需要手动重跑 analyze。
+- 报告明确区分“已释放 / 隔离区占用 / 可用空间变化”，负的空间变化显示为 `-4.00 KB` 而不是退化成 `-`；失败项目逐条列出，未验证的步骤不会显示为通过。
+- `state.json` 的 `files.cleanup_report_html` 记录路径；execute / verify / purge / restore 的终端输出都会显示该路径。
+- 清理前后两份 HTML 都新增“报告包含设备序列号与文件路径，分享前请自行脱敏”的提示。
+- 报告渲染失败不会影响已经完成的清理操作：写入错误页，Markdown/JSON/journal 证据仍然保留。
+- 新增 6 个测试：完整流程区块、失败路径转义、缺少 verify/selection 时降级、execute+verify 集成、purge 更新、restore 更新。
+- 全量 247 passed, 1 skipped（248 collected）。
+
+### Notes
+- 本轮没有在真实设备上执行新的写操作（未获得用户新的执行确认）；清理结果报告由 mock 全链路验证。
+- HTML 只是已记录状态的另一种呈现，不会触发新的删除、移动或恢复。
+
 ## v1.8.0 — 可视化 HTML 分析报告
 
 ### Added

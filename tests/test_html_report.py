@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 
-from adc_lib.html_report import render_analysis_html
+from adc_lib.html_report import render_analysis_html, render_cleanup_html
 
 CAMERA = "/sdcard/DCIM/Camera"
+CACHE = "/sdcard/Android/data/com.installed.app/cache"
 
 
 def _analysis(**overrides):
@@ -164,3 +165,157 @@ def test_analyze_writes_html_and_keeps_device_untouched(env):
     assert re.search(r"app_cache", html)
     assert env.state_json("state.json")["files"]["report_html"].endswith("report-before.html")
     env.assert_unchanged(before)
+
+
+# ---------------------------------------------------------------- cleanup report
+def _cleanup_bundle():
+    analysis = _analysis()
+    selection = {
+        "mode": "quarantine",
+        "summary": {"groups": 1, "files": 2, "bytes": 800, "human_bytes": "800 B"},
+        "items": [{
+            "id": "app_cache-abc",
+            "title": "应用缓存：/sdcard/Android/data/x/cache",
+            "category": "app_cache",
+            "category_title": "应用缓存",
+            "risk": "SAFE",
+            "action": "clean_dir_children",
+            "file_count": 2,
+            "total_bytes": 800,
+            "human_size": "800 B",
+        }],
+    }
+    execution = {
+        "execution_id": "exec-test",
+        "platform": "android",
+        "transport": "mock",
+        "started_at": "2026-11-09T12:00:00+08:00",
+        "finished_at": "2026-11-09T12:00:05+08:00",
+        "mode": "quarantine",
+        "status": "completed",
+        "quarantine_root": "/sdcard/.android-deep-clean/quarantine/exec-test",
+        "device_identity": {"serial": "MOCK-1"},
+        "summary": {
+            "success_files": 2, "failed_files": 0, "processed_bytes": 800,
+            "selected_bytes": 800, "released_bytes": 0,
+            "quarantine_files": 2, "quarantine_bytes": 800,
+            "quarantine_occupied_bytes": 800,
+            "backup_files": 0, "backup_bytes": 0, "df_delta_bytes": -4096,
+        },
+        "items": [{
+            "id": "app_cache-abc", "category": "app_cache", "status": "success",
+            "success_count": 2, "failed_count": 0, "processed_bytes": 800, "error": "",
+        }],
+        "failures": [],
+        "free_before": {"available_bytes": 1_000_000},
+        "free_after": {"available_bytes": 995_904},
+        "warnings": ["隔离模式不会立即释放空间。"],
+        "next_actions": ["运行 verify 验证清理结果；"],
+    }
+    verification = {
+        "summary": {
+            "checked": 2, "passed": 2, "failed": 0,
+            "source_present": 0, "quarantine_missing": 0, "free_delta": -4096,
+        },
+        "failures": [],
+        "free_now": {"available_bytes": 996_000},
+        "note": "隔离模式在 purge 前不会释放空间。",
+    }
+    return analysis, selection, execution, verification
+
+
+def test_cleanup_html_covers_the_whole_process():
+    analysis, selection, execution, verification = _cleanup_bundle()
+    html = render_cleanup_html(analysis, selection, execution, verification)
+    assert html.startswith("<!DOCTYPE html>")
+    for section in ("清理过程", "用户选择了什么", "实际执行了什么", "验证结果",
+                    "隔离区、释放与恢复", "清理前发现了什么", "剩余问题与下一步"):
+        assert section in html, section
+    assert 'id="process"' in html and 'id="release"' in html
+    assert "已运行" in html
+    assert "2 / 2" in html
+    assert "尚未 purge" in html
+    assert "隔离区仍占用设备空间" in html
+    assert "-4.00 KB" in html, "negative free-space changes must not collapse to '-'"
+    assert "分享前请自行脱敏" in html
+    assert "http://" not in html
+    assert "https://" not in html
+    assert "<script" not in html.lower()
+    assert "src=" not in html
+
+
+def test_cleanup_html_escapes_failure_paths():
+    analysis, selection, execution, verification = _cleanup_bundle()
+    payload = '<img src=x onerror=alert(1)>.tmp'
+    execution["failures"] = [{"path": f"/sdcard/{payload}", "reason": payload, "item": "app_cache-abc"}]
+    html = render_cleanup_html(analysis, selection, execution, verification)
+    assert "<img" not in html
+    assert "&lt;img" in html
+
+
+def test_cleanup_html_without_verify_or_selection_degrades():
+    analysis, _, execution, _ = _cleanup_bundle()
+    html = render_cleanup_html(analysis, {}, execution, {})
+    assert "尚未运行 verify" in html
+    assert "没有找到选择清单" in html
+    assert "清理结果报告" in html
+
+
+def test_execute_and_verify_write_cleanup_html(env):
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.phone.file(CACHE + "/b.bin", size=500)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+
+    path = env.state_path("execution/report-cleanup.html")
+    assert path.exists()
+    html = path.read_text(encoding="utf-8")
+    assert "清理结果报告" in html
+    assert "清理过程" in html
+    assert "尚未运行 verify" in html
+    assert "成功 2 个" in html
+    assert "http://" not in html
+    assert env.state_json("state.json")["files"]["cleanup_report_html"].endswith("report-cleanup.html")
+
+    env.ok("verify")
+    html = path.read_text(encoding="utf-8")
+    assert "验证结果" in html
+    assert "所有检查项通过" in html
+    assert "2 / 2" in html
+    assert "尚未运行 verify" not in html
+
+
+def test_cleanup_html_reports_purge(env):
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.phone.file(CACHE + "/b.bin", size=500)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    token = str(env.execution.get("purge_token") or "")
+    assert token
+    env.run(["quarantine", "purge", "--token", token]).expect(0)
+
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "永久释放（purge）" in html
+    assert "已永久释放" in html
+    assert "永久删除" in html
+    assert "无法恢复" in html
+
+
+def test_cleanup_html_reports_restore(env):
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.phone.file(CACHE + "/b.bin", size=500)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    env.ok("restore", "--all")
+
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "恢复（restore）" in html
+    assert "已恢复" in html
+    assert "2 个" in html
+    assert env.phone.exists(CACHE + "/a.bin")
