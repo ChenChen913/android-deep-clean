@@ -39,6 +39,7 @@
   analysis/analysis-summary.json AI 优先读（小）
   analysis/review-template.json  复核模板
   analysis/report-before.md      清理前报告
+  analysis/report-before.html    清理前可视化报告（单文件、离线）
   plan/plan.json                 计划 + plan_hash
   plan/report-plan.md
   selection/selection.json       选择 + token + selection_hash

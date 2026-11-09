@@ -466,6 +466,7 @@ def cmd_analyze(args: Any, config: dict[str, Any]) -> int:
         print(f"- 候选组：{summary.get('candidate_groups', 0)}，文件 {summary.get('candidate_files', 0)}，逻辑大小 {human_bytes(summary.get('candidate_bytes', 0))}")
         print(f"- 需复核：{summary.get('review_required', 0)} 组")
         print(f"- 报告：{state.get_file('report_before')}")
+        print(f"- 可视化报告：{state.get_file('report_html')}")
         print(f"- 摘要：{state.get_file('analysis_summary')}")
         print(f"- 复核模板：{state.dir('analysis') / 'review-template.json'}")
         print("\n下一步：AI 复核后 plan --review <review.json> --state " + args.state)

@@ -18,6 +18,7 @@ from typing import Any, Iterable
 
 from .app_storage_index import AppStorageIndex
 from .archive import DirectoryArchive
+from .html_report import write_analysis_html
 from .media_index import MediaIndex
 from .models import CandidateFile, PackageIndex
 from .reconcile import build_storage_accounting
@@ -1288,6 +1289,7 @@ class Analyzer:
         })
         atomic_write_json(self.out_dir / "review-template.json", review_template)
         (self.out_dir / "report-before.md").write_text(analysis_markdown(analysis, self.config), encoding="utf-8")
+        html_path = write_analysis_html(analysis, self.out_dir / "report-before.html", self.config)
         self.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('analysis_hash',?)", (analysis["analysis_hash"],))
         self.db.commit()
         self.db.close()
@@ -1295,6 +1297,7 @@ class Analyzer:
         self.state.set_file("analysis_json", self.out_dir / "analysis.json")
         self.state.set_file("analysis_summary", self.out_dir / "analysis-summary.json")
         self.state.set_file("report_before", self.out_dir / "report-before.md")
+        self.state.set_file("report_html", html_path)
         return analysis
 
 

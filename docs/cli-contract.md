@@ -43,7 +43,7 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
   scan/aux/sources.json media-index.jsonl app-storage.json
   history/scan-<时间>/ snapshot.db snapshot-meta.json scan-summary.md
   history/archive.db
-  analysis/analysis.db analysis.json analysis-summary.json review-template.json report-before.md
+  analysis/analysis.db analysis.json analysis-summary.json review-template.json report-before.md report-before.html
   plan/plan.json report-plan.md
   selection/selection.json report-selection.md
   execution/journal.jsonl execution.json report-after.md verification.json report-verify.md report-purge.md report-restore.md

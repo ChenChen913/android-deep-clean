@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.7.1`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.8.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -192,6 +192,7 @@ Outputs:
 | File | Purpose |
 |---|---|
 | `report-before.md` | Human-readable pre-clean report |
+| `report-before.html` | Single-file visual report, opens offline in any browser |
 | `analysis-summary.json` | Compact summary for the AI |
 | `analysis.db` | Full candidate and per-file manifest |
 | `review-template.json` | Review template |
@@ -440,6 +441,17 @@ After a successful `execute`, the token hash is recorded in `execution/consumed-
 - continuing requires a fresh `scan → analyze → plan → select` and a new user confirmation;
 - all five existing gates remain: `plan_hash`, `selection_hash`, device identity, file-manifest digest, and the per-file pre-execution `stat` check.
 
+### Visual HTML report (v1.8.0)
+
+`analyze` also writes `analysis/report-before.html`, which opens directly in a browser with no network access, scripts, fonts or other external assets:
+
+- Space story: device used, file scan, base APKs and the unexplained gap on a proportional bar, with an explicit "do not add these together" note.
+- Scan coverage, media-index crosscheck, app-level storage and cross-round directory changes use the same data as the Markdown report.
+- Candidates are collapsible; each shows what it is, why it was listed, what deleting it changes, sample paths, evidence and keep suggestions.
+- Protected items, limitations and the safety boundary are listed separately, and the footer repeats that nothing has been deleted.
+
+The report is rendered on the host, never touches the device, HTML-escapes every path and evidence string, and shows at most 400 candidates per run (the full manifest stays in `analysis.db`). It does not change candidates, risks or selectability, and it is not deletion authorization.
+
 ### Command reference
 
 | Command | Purpose | Modifies the phone |
@@ -567,7 +579,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.7.1: 236 passed, 1 skipped (237 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.8.0: 241 passed, 1 skipped (242 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

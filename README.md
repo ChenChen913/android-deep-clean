@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.7.1`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.8.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -196,6 +196,7 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial $
 | 文件 | 用途 |
 |---|---|
 | `report-before.md` | 人类可读的清理前报告 |
+| `report-before.html` | 单文件可视化报告，浏览器直接打开，可离线查看 |
 | `analysis-summary.json` | AI 优先读的摘要 |
 | `analysis.db` | 完整候选与逐文件清单 |
 | `review-template.json` | 复核模板 |
@@ -458,6 +459,17 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 需要继续清理时必须重新 `scan → analyze → plan → select`，让用户重新确认；
 - 五个安全闸门仍然全部保留：`plan_hash`、`selection_hash`、设备身份、文件清单摘要、执行前逐文件 stat。
 
+### 可视化 HTML 报告（v1.8.0）
+
+`analyze` 会额外生成 `analysis/report-before.html`，用浏览器直接打开即可，不需要联网、不加载任何外部脚本或字体：
+
+- 空间去向速览：设备已用、文件扫描、基础 APK、未解释差额，用比例条展示，并明确标注各项不能相加。
+- 扫描覆盖、媒体索引核对、应用级存储、跨轮目录变化：与 Markdown 报告同一份数据。
+- 清理候选可折叠展开，每条包含“这是什么 / 为什么列出 / 删除影响”、路径示例、证据与保留建议。
+- 受保护内容、限制与安全边界单独列出，页脚再次声明“只读分析、尚未删除任何文件”。
+
+报告是主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。HTML 不改变候选、风险或可选择性，也不构成删除授权。
+
 ### 命令总表
 
 | 命令 | 用途 | 修改设备 |
@@ -590,7 +602,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.7.1 实测：236 passed, 1 skipped（237 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.8.0 实测：241 passed, 1 skipped（242 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
