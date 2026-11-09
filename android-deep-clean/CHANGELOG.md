@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.9.5 — restore 路径守卫与哈希校验状态
+
+### Fixed
+- `restore` 现在会校验 `quarantine_path` 必须位于本次执行的隔离区内；伪造或越界的 journal 路径会被拒绝，不会移动隔离区之外的文件。
+- `restore` 会按执行记录中的候选类别重新执行 `guard_path`，拒绝把文件恢复到系统路径、个人媒体目录或其他不符合安全规则的位置；无法确定类别时按失败处理。
+- `verify` 同样校验隔离路径范围，避免对 journal 中被篡改到隔离区外的路径做检查。
+- 新增 `Transport.hash_tool()`：明确区分“设备没有 sha256sum/md5sum”和“有工具但哈希计算失败”。
+  - 设备没有可比对的哈希工具时，按大小校验降级，并在 execution.json、Markdown、HTML 与 CLI 中明确标记“仅大小校验 / 未做内容校验”。
+  - 哈希计算异常（命令异常或返回空摘要）记录为“完整性校验未完成”，purge / restore 拒绝操作，verify 按失败处理，不再显示为通过。
+  - 设备只有 md5 时不与 SHA-256 基准比较，避免把正常文件误判为内容被替换。
+- `restore` 新增 `config` 参数，CLI 会把当前配置传入路径守卫；直接调用时回退到默认配置。
+- 新增 7 个回归测试：journal 隔离路径越界与路径穿越、恢复目标不安全、哈希命令异常、无哈希工具降级、哈希返回空、仅 md5 设备不误判。
+
+### Notes
+- 全量 264 passed, 1 skipped（265 collected）。
+
 ## v1.9.4 — purge / restore 增加隔离文件完整性校验
 
 ### Fixed

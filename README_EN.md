@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.9.4`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.9.5`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -268,7 +268,7 @@ python "$Skill\scripts\adc.py" restore --state $State --transport adb --serial $
 python "$Skill\scripts\adc.py" quarantine purge --state $State --transport adb --serial $Serial --token <PURGE_TOKEN>
 ```
 
-Before purging or restoring, the command checks that each quarantine file still matches the size recorded in the journal. If `execute` used `--backup-to`, it also compares the SHA-256 with the backup. A file replaced or modified while in quarantine is refused and left in place; the reason is written to the journal and the report.
+Before purging or restoring, the command checks that each quarantine file still matches the size recorded in the journal. If `execute` used `--backup-to`, it also compares the SHA-256 with the backup. Restore additionally checks that `quarantine_path` is inside this execution's quarantine area and re-applies the category path rules to the target, so a tampered journal cannot move files from outside the quarantine. A file replaced or modified while in quarantine is refused and left in place; the reason is written to the journal and the report. Devices without a hash tool are explicitly marked as "size-only"; a hash computation error is recorded as "integrity check incomplete" and the operation is refused.
 
 ### On-device: Termux (`--transport local`)
 
@@ -588,7 +588,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.9.4: 257 passed, 1 skipped (258 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.9.5: 264 passed, 1 skipped (265 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

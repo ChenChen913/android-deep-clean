@@ -50,6 +50,20 @@ def _expected_bytes(device_path: str, size: int) -> bytes:
     return generated_bytes(size, seed=device_path)
 
 
+def _rewrite_journal(env, mutate):
+    """Rewrite every journal line through ``mutate`` (tamper simulation)."""
+    path = Path(str(env.execution.get("journal_path") or ""))
+    entries = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            entries.append(mutate(json.loads(line)))
+    path.write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+        encoding="utf-8",
+    )
+
+
 # ---------------------------------------------------------------- happy paths
 def test_quarantine_execute_moves_files_and_verify(env):
     sizes = _cache_fixture(env)
@@ -927,3 +941,164 @@ def test_previous_runs_migrates_failed_only_record():
         files_key="purged_files",
         bytes_key="purged_bytes",
     ) == []
+
+
+@pytest.mark.parametrize("tampered", ["outside", "traversal"])
+def test_restore_refuses_tampered_quarantine_path(env, tampered):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    outside = "/sdcard/DCIM/Camera/keep.jpg"
+    env.phone.file(outside, size=123)
+    original = env.phone.host(outside).read_bytes()
+    root = str(env.execution["quarantine_root"])
+    forged = outside if tampered == "outside" else root + "/files/../../../../DCIM/Camera/keep.jpg"
+    _rewrite_journal(
+        env,
+        lambda entry: (
+            {**entry, "quarantine_path": forged}
+            if entry.get("event") == "quarantined" else entry
+        ),
+    )
+
+    verified = env.run("verify")
+    verified.expect_error(6)
+    assert "隔离路径不在本次隔离区内" in verified.json()["failures"][0]["reason"]
+
+    result = env.run("restore", "--all")
+    result.expect_error(6)
+    payload = result.json()
+    assert payload["restored_files"] == 0
+    assert payload["failed"] == 1
+    reason = payload["failures"][0]["reason"]
+    assert "隔离路径不在本次隔离区内" in reason or "记录中的路径非法" in reason
+    assert stored[0].exists(), "the real quarantine file must stay"
+    assert env.phone.host(outside).read_bytes() == original, "outside file must not be moved"
+    assert not env.phone.exists(path)
+
+
+def test_restore_refuses_unsafe_target_path(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    unsafe = "/system/etc/hosts"
+    _rewrite_journal(
+        env,
+        lambda entry: {**entry, "path": unsafe} if entry.get("event") == "quarantined" else entry,
+    )
+    result = env.run("restore", "--all")
+    result.expect_error(6)
+    payload = result.json()
+    assert payload["restored_files"] == 0
+    assert "恢复目标不符合安全路径规则" in payload["failures"][0]["reason"]
+    assert stored[0].exists()
+    assert not env.phone.exists(unsafe)
+
+
+def test_hash_calculation_error_is_incomplete_not_passed(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    env.set_caps(hash_mode="error")
+    verified = env.run("verify")
+    verified.expect_error(6)
+    verification = verified.json()
+    assert verification["summary"]["hash_incomplete"] == 1
+    assert verification["summary"]["failed"] == 1
+    assert "完整性校验未完成" in verification["failures"][0]["reason"]
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "校验未完成" in html
+    assert "所有检查项通过" not in html
+
+    purged = env.run(["quarantine", "purge", "--token", env.execution["purge_token"]])
+    purged.expect_error(6)
+    payload = purged.json()
+    assert payload["purged_files"] == 0
+    assert payload["failed"] == 1
+    assert payload["hash_incomplete_files"] == 1
+    assert "完整性校验未完成" in payload["failures"][0]["reason"]
+    assert stored[0].exists()
+
+
+def test_missing_hash_tool_degrades_to_size_and_is_marked(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+
+    env.set_caps(hash_mode="unavailable")
+    verified = env.ok("verify").json()
+    summary = verified["summary"]
+    assert summary["hash_unavailable"] == 1
+    assert summary["hash_verified"] == 0
+    assert summary["failed"] == 0
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "仅大小校验" in html
+    assert "未做内容校验" in html
+
+    purged = env.run(["quarantine", "purge", "--token", env.execution["purge_token"]])
+    purged.expect(0)
+    payload = purged.json()
+    assert payload["purged_files"] == 1
+    assert payload["hash_unavailable_files"] == 1
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "未做内容校验" in html
+
+
+def test_hash_none_is_incomplete(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    env.set_caps(hash_mode="none")
+    purged = env.run(["quarantine", "purge", "--token", env.execution["purge_token"]])
+    purged.expect_error(6)
+    payload = purged.json()
+    assert payload["hash_incomplete_files"] == 1
+    assert "无法计算隔离文件哈希" in payload["failures"][0]["reason"]
+    assert stored[0].exists()
+
+
+def test_md5_only_device_does_not_false_reject(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+
+    env.set_caps(hash_mode="md5")
+    purged = env.run(["quarantine", "purge", "--token", env.execution["purge_token"]])
+    purged.expect(0)
+    payload = purged.json()
+    assert payload["purged_files"] == 1
+    assert payload["hash_unavailable_files"] == 1, "md5 cannot be compared with a SHA-256 baseline"

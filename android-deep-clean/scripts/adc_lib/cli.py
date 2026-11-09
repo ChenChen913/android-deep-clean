@@ -653,6 +653,10 @@ def cmd_purge(args: Any, config: dict[str, Any]) -> int:
                 f"{human_bytes(remaining.get('remaining_bytes', 0))}"
             )
         print(f"- 失败：{result.get('failed', 0)}")
+        if result.get("hash_unavailable_files"):
+            print(f"- 仅大小校验：{result.get('hash_unavailable_files', 0)} 个（设备缺少可比对的哈希工具）")
+        if result.get("hash_incomplete_files"):
+            print(f"- 完整性校验未完成：{result.get('hash_incomplete_files', 0)} 个")
         print(f"- 可用空间变化：{human_bytes(result.get('free_delta', 0))}")
         print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
     return 0 if not result.get("failed") else 6
@@ -661,7 +665,7 @@ def cmd_purge(args: Any, config: dict[str, Any]) -> int:
 def cmd_restore(args: Any, config: dict[str, Any]) -> int:
     state = _state(args)
     transport = _transport(args, config)
-    result = restore_execution(state, transport, split_csv(args.ids), bool(args.all))
+    result = restore_execution(state, transport, split_csv(args.ids), bool(args.all), config)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
@@ -680,6 +684,10 @@ def cmd_restore(args: Any, config: dict[str, Any]) -> int:
                 f"{human_bytes(remaining.get('remaining_bytes', 0))}"
             )
         print(f"- 失败：{result.get('failed', 0)}")
+        if result.get("hash_unavailable_files"):
+            print(f"- 仅大小校验：{result.get('hash_unavailable_files', 0)} 个（设备缺少可比对的哈希工具）")
+        if result.get("hash_incomplete_files"):
+            print(f"- 完整性校验未完成：{result.get('hash_incomplete_files', 0)} 个")
         print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
     return 0 if not result.get("failed") else 6
 

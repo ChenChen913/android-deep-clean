@@ -822,16 +822,25 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
         )
         parts.append("</section>")
         return "".join(parts)
-    parts.append(
-        _cards([
-            ("检查", f"{_num(summary.get('checked'))}"),
-            ("通过", f"{_num(summary.get('passed'))}"),
-            ("失败", f"{_num(summary.get('failed'))}"),
-            ("源文件仍存在", f"{_num(summary.get('source_present'))}"),
-            ("隔离文件缺失", f"{_num(summary.get('quarantine_missing'))}"),
-            ("可用空间变化", _signed_size(summary.get("free_delta"))),
-        ])
-    )
+    hash_verified = _num(summary.get("hash_verified"))
+    hash_unavailable = _num(summary.get("hash_unavailable"))
+    hash_incomplete = _num(summary.get("hash_incomplete"))
+    cards = [
+        ("检查", f"{_num(summary.get('checked'))}"),
+        ("通过", f"{_num(summary.get('passed'))}"),
+        ("失败", f"{_num(summary.get('failed'))}"),
+        ("源文件仍存在", f"{_num(summary.get('source_present'))}"),
+        ("隔离文件缺失", f"{_num(summary.get('quarantine_missing'))}"),
+        ("可用空间变化", _signed_size(summary.get("free_delta"))),
+    ]
+    if hash_verified or hash_unavailable or hash_incomplete:
+        cards += [
+            ("内容校验通过", f"{hash_verified}"),
+            ("仅大小校验", f"{hash_unavailable}"),
+        ]
+        if hash_incomplete:
+            cards.append(("校验未完成", f"{hash_incomplete}"))
+    parts.append(_cards(cards))
     failures = verification.get("failures") or []
     checked = _num(summary.get("checked"))
     if failures:
@@ -851,7 +860,22 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
             "（例如相关文件已全部 purge 或恢复）。这不等于验证通过。</div>"
         )
     else:
-        parts.append('<div class="note">所有检查项通过。</div>')
+        if hash_unavailable:
+            parts.append(
+                f'<div class="note">所有已执行检查项通过；其中 {hash_unavailable} 个文件仅校验大小，'
+                "未做内容校验。</div>"
+            )
+        else:
+            parts.append('<div class="note">所有检查项通过。</div>')
+    if hash_unavailable:
+        parts.append(
+            f'<div class="note">有 {hash_unavailable} 个隔离文件因设备缺少 SHA-256/MD5 工具，'
+            "仅校验了大小，未做内容校验。</div>"
+        )
+    if hash_incomplete:
+        parts.append(
+            f'<div class="note warn">有 {hash_incomplete} 个隔离文件完整性校验未完成，已按失败处理。</div>'
+        )
     if verification.get("note"):
         parts.append(f'<div class="note">{_e(verification.get("note"))}</div>')
     parts.append("</section>")
@@ -949,6 +973,16 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                 f'<div class="note">另有 {_num(purge.get("missing_files"))} 个隔离文件在 purge 前已不存在，'
                 "标记为 missing，未计入永久删除。</div>"
             )
+        if _num(purge.get("hash_unavailable_files")):
+            parts.append(
+                f'<div class="note">有 {_num(purge.get("hash_unavailable_files"))} 个隔离文件'
+                "因设备缺少哈希工具，仅校验了大小，未做内容校验。</div>"
+            )
+        if _num(purge.get("hash_incomplete_files")):
+            parts.append(
+                f'<div class="note warn">有 {_num(purge.get("hash_incomplete_files"))} 个隔离文件'
+                "完整性校验未完成，已拒绝操作。</div>"
+            )
         if len(purge_runs) > 1:
             parts.append('<h3>purge 执行记录</h3><div class="scroll"><table><thead><tr>'
                          '<th>时间</th><th class="r">删除</th><th class="r">逻辑大小</th>'
@@ -993,6 +1027,16 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
         cards.append(("失败", f"{_num(restore.get('failed'))}"))
         parts.append('<h3>恢复（restore）</h3>')
         parts.append(_cards(cards))
+        if _num(restore.get("hash_unavailable_files")):
+            parts.append(
+                f'<div class="note">有 {_num(restore.get("hash_unavailable_files"))} 个隔离文件'
+                "因设备缺少哈希工具，仅校验了大小，未做内容校验。</div>"
+            )
+        if _num(restore.get("hash_incomplete_files")):
+            parts.append(
+                f'<div class="note warn">有 {_num(restore.get("hash_incomplete_files"))} 个隔离文件'
+                "完整性校验未完成，已拒绝操作。</div>"
+            )
         if len(restore_runs) > 1:
             parts.append('<h3>restore 执行记录</h3><div class="scroll"><table><thead><tr>'
                          '<th>时间</th><th class="r">恢复</th><th class="r">逻辑大小</th>'

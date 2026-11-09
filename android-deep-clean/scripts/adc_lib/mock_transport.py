@@ -522,10 +522,24 @@ class MockTransport(Transport):
                 break
         return found
 
+    def hash_tool(self) -> str:
+        mode = str(self.caps.get("hash_mode") or "ok")
+        if mode == "unavailable":
+            return ""
+        if mode == "md5":
+            return "md5sum"
+        return "sha256sum"
+
     def hash_files(self, paths: Iterable[str], *, timeout: int = 600) -> dict[str, str | None]:
+        mode = str(self.caps.get("hash_mode") or "ok")
+        if mode == "error":
+            raise TransportError("模拟哈希计算异常")
         result: dict[str, str | None] = {}
         for raw in paths:
             path = normalize_device_path(raw)
+            if mode in {"unavailable", "none"}:
+                result[path] = None
+                continue
             if self._cap_blocked(path):
                 result[path] = None
                 continue
@@ -534,7 +548,7 @@ class MockTransport(Transport):
                 if host.is_symlink() or not host.is_file():
                     result[path] = None
                     continue
-                digest = hashlib.sha256()
+                digest = hashlib.md5() if mode == "md5" else hashlib.sha256()
                 with open(host, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                         digest.update(chunk)

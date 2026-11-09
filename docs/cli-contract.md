@@ -72,6 +72,8 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
 - 任何失败不得静默：写入 execution.json / journal / report。
 - 隔离区文件必须可 restore；purge 必须凭 execute 输出的 purge_token。
 - purge / restore 前必须校验隔离文件大小与 journal 记录一致；有 `backup_sha256` 时还要校验内容摘要；不一致则拒绝操作并记录原因。
+- restore 的 `quarantine_path` 必须位于本次执行的隔离区；恢复目标必须按候选类别重新通过 `guard_path`，不得恢复系统路径、个人媒体目录或无法确定类别的路径。
+- 哈希工具缺失时按大小校验并在报告中标记“仅大小校验”；哈希计算异常记为“完整性校验未完成”，不得视为通过。
 
 ## mock 设备目录与 JSON
 

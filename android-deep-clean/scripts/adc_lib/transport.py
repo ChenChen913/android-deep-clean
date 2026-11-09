@@ -196,6 +196,10 @@ class Transport:
     def hash_files(self, paths: Iterable[str], *, timeout: int = 600) -> dict[str, str | None]:
         raise NotImplementedError
 
+    def hash_tool(self) -> str:
+        """Return 'sha256sum', 'md5sum', or '' when the device has no hash tool."""
+        return ""
+
     def df(self, path: str = "/sdcard") -> dict[str, Any]:
         raise NotImplementedError
 
@@ -237,6 +241,7 @@ class ShellTransport(Transport):
         self.timeout = timeout
         self.su_command = su_command
         self._privilege = "shell"
+        self._hash_tool_cache: str | None = None
 
     # -- process plumbing -------------------------------------------------
     def _shell_argv(self, command: str) -> list[str]:
@@ -544,18 +549,28 @@ class ShellTransport(Transport):
         rc, out, _ = self.shell_rc(cmd, timeout=300)
         return [line.strip() for line in out.splitlines() if line.strip().startswith("/")] if rc == 0 else []
 
+    def hash_tool(self) -> str:
+        if self._hash_tool_cache is not None:
+            return self._hash_tool_cache
+        tool = ""
+        rc, out, _ = self.shell_rc("command -v sha256sum >/dev/null 2>&1; echo $?", timeout=30)
+        if rc == 0 and out.strip() == "0":
+            tool = "sha256sum"
+        else:
+            rc2, out2, _ = self.shell_rc("command -v md5sum >/dev/null 2>&1; echo $?", timeout=30)
+            if rc2 == 0 and out2.strip() == "0":
+                tool = "md5sum"
+        self._hash_tool_cache = tool
+        return tool
+
     def hash_files(self, paths: Iterable[str], *, timeout: int = 600) -> dict[str, str | None]:
         path_list = [normalize_device_path(p) for p in paths]
         result: dict[str, str | None] = {p: None for p in path_list}
         if not path_list:
             return result
-        tool = "sha256sum"
-        rc, out, _ = self.shell_rc("command -v sha256sum >/dev/null 2>&1; echo $?", timeout=30)
-        if rc != 0 or out.strip() != "0":
-            tool = "md5sum"
-            rc2, out2, _ = self.shell_rc("command -v md5sum >/dev/null 2>&1; echo $?", timeout=30)
-            if rc2 != 0 or out2.strip() != "0":
-                return result
+        tool = self.hash_tool()
+        if not tool:
+            return result
         expected_len = 64 if tool == "sha256sum" else 32
         pattern = re.compile(rf"^([0-9a-fA-F]{{{expected_len}}})\s+(.+)$")
         for batch in batch_iter(path_list, 50):
@@ -668,6 +683,7 @@ class ShellTransport(Transport):
 
     def configure_privilege(self, mode: str = "auto") -> str:
         mode = (mode or "auto").lower()
+        self._hash_tool_cache = None
         real_android = self.name != "local" or self._android_shell_host()
         if mode == "none":
             self._privilege = "shell"

@@ -13,8 +13,8 @@
 4. **运行命令**：`python android-deep-clean/scripts/adc.py --help`
    - 来源：`android-deep-clean/scripts/adc.py`
 5. **测试命令**：`python -m pytest tests -q`
-   - 产生数字的命令：`python -m pytest tests -q` → 257 passed, 1 skipped（2026-11-09，v1.9.4）
-   - 收集数量命令：`python -m pytest tests -q --collect-only` → 258 tests collected
+   - 产生数字的命令：`python -m pytest tests -q` → 264 passed, 1 skipped（2026-11-09，v1.9.5）
+   - 收集数量命令：`python -m pytest tests -q --collect-only` → 265 tests collected
 6. **构建命令**：无（纯 Python，无打包/编译步骤）
 7. **目录结构**（三层内）：
    - `android-deep-clean/` — Skill 本体（`SKILL.md` + `scripts/` + `references/`）

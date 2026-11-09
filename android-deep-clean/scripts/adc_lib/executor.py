@@ -735,37 +735,103 @@ def _quarantine_remaining(entries: list[dict[str, Any]]) -> dict[str, int]:
     return {"remaining_files": files, "remaining_bytes": size}
 
 
-def _quarantine_integrity_reason(
+def _quarantine_roots(execution: dict[str, Any]) -> list[str]:
+    qroot = str(execution.get("quarantine_root") or "")
+    roots = [str(root) for root in (execution.get("quarantine_roots") or []) if root]
+    if qroot and qroot not in roots:
+        roots.append(qroot)
+    if not roots:
+        raise SafetyError("execution 缺少 quarantine_root")
+    return roots
+
+
+def _load_restore_packages(state: State) -> Any:
+    """Load the scan package index for restore path guards.
+
+    Missing or unreadable scan state is not fatal: ``guard_path`` still
+    applies every other rule and fails closed for paths that need the index.
+    """
+    scan_path = state.get_file("scan")
+    if not scan_path:
+        return None
+    path = Path(scan_path)
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        try:
+            return load_packages(conn)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - restore keeps the remaining guard rules
+        return None
+
+
+def _hash_quarantine_files(
+    transport: Transport,
+    paths: list[str],
+) -> tuple[str, dict[str, str | None], str]:
+    """Return ``(tool, hashes, error)`` for a batch of quarantine files.
+
+    ``tool == ""`` means the device has no hash tool: this is a deliberate
+    degradation, not a verification failure.  A non-empty ``error`` means the
+    tool exists but hashing could not be completed.
+    """
+    if not paths:
+        return "", {}, ""
+    try:
+        tool = transport.hash_tool()
+    except Exception as exc:  # noqa: BLE001 - must be reported, never hidden
+        return "", {}, str(exc)
+    if not tool:
+        return "", {}, ""
+    try:
+        return tool, transport.hash_files(paths), ""
+    except Exception as exc:  # noqa: BLE001 - must be reported, never hidden
+        return tool, {}, str(exc)
+
+
+def _quarantine_integrity(
     entry: dict[str, Any],
     current: Any,
-    actual_hash: str | None = None,
-) -> str:
-    """Refuse purge/restore when the quarantine file no longer matches its record.
+    actual_hash: str | None,
+    *,
+    hash_tool: str,
+    hash_error: str = "",
+) -> tuple[str, str]:
+    """Classify the quarantine file before purge/restore.
 
-    Size is always checked.  When the execution kept a computer backup, the
-    backup SHA-256 is a content reference for the same bytes; callers batch
-    hash those files once and pass the result in.  Hashing is an extra check,
-    not a prerequisite: devices without sha256sum/md5sum still get the size
-    check.
+    Returns ``(status, reason)``.  ``ok_hash`` / ``ok_size`` / ``size_only``
+    may proceed; ``size_changed`` / ``hash_mismatch`` / ``incomplete`` must be
+    recorded as failures.  ``size_only`` is a deliberate degradation for
+    devices without a comparable hash tool and must be surfaced in reports.
     """
     expected_size = int(entry.get("size") or 0)
     actual_size = int(getattr(current, "size", 0) or 0)
     if actual_size != expected_size:
         return (
+            "size_changed",
             f"隔离文件大小已变化（隔离时 {expected_size}B，当前 {actual_size}B），"
-            "拒绝永久删除或恢复"
+            "拒绝永久删除或恢复",
         )
     expected_hash = str(entry.get("backup_sha256") or "")
-    # hash_files may fall back to md5sum (32 hex); never compare digests from
-    # different algorithms, or a valid file would be refused as "changed".
-    if (
-        expected_hash
-        and actual_hash
-        and len(actual_hash) == len(expected_hash)
-        and actual_hash != expected_hash
-    ):
-        return "隔离文件 SHA-256 与备份记录不一致（内容可能已被替换），拒绝永久删除或恢复"
-    return ""
+    if not expected_hash:
+        return "ok_size", ""
+    if hash_error:
+        return "incomplete", f"完整性校验未完成：{hash_error}"
+    if not hash_tool:
+        return "size_only", "设备没有 sha256sum/md5sum，仅校验大小"
+    if not actual_hash:
+        return "incomplete", "完整性校验未完成：无法计算隔离文件哈希"
+    if len(actual_hash) != len(expected_hash):
+        return "size_only", "设备仅提供 MD5，无法与 SHA-256 基准比较，仅校验大小"
+    if actual_hash != expected_hash:
+        return (
+            "hash_mismatch",
+            "隔离文件 SHA-256 与备份记录不一致（内容可能已被替换），拒绝永久删除或恢复",
+        )
+    return "ok_hash", ""
 
 
 def _previous_runs(
@@ -843,6 +909,9 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
         entry.get("item") for entry in entries
         if entry.get("restore_status") == "restored" and entry.get("item")
     }
+    roots = _quarantine_roots(execution) if any(
+        entry.get("event") == "quarantined" for entry in entries
+    ) else []
     hash_targets: list[str] = []
     for entry in entries:
         if entry.get("event") != "quarantined":
@@ -851,15 +920,16 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
             continue
         if not entry.get("backup_sha256"):
             continue
-        qpath = str(entry.get("quarantine_path") or "")
-        if qpath:
-            hash_targets.append(qpath)
-    verification_hashes: dict[str, str | None] = {}
-    if hash_targets:
         try:
-            verification_hashes = transport.hash_files(hash_targets)
-        except Exception:  # noqa: BLE001 - hashing is a best-effort extra check
-            verification_hashes = {}
+            qpath = normalize_device_path(str(entry.get("quarantine_path") or ""))
+        except Exception:  # noqa: BLE001 - reported by the verify pass below
+            continue
+        if qpath and any(is_under(qpath, root) for root in roots):
+            hash_targets.append(qpath)
+    hash_tool, verification_hashes, hash_error = _hash_quarantine_files(transport, hash_targets)
+    hash_verified = 0
+    hash_unavailable = 0
+    hash_incomplete = 0
     for entry in entries:
         if entry.get("event") in {"skipped", "failed", "restored"}:
             continue
@@ -876,24 +946,30 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
                 source_present += 1
                 continue
             qpath = entry.get("quarantine_path", "")
+            if qpath and roots and not any(is_under(qpath, root) for root in roots):
+                failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内"})
+                continue
             qstat = transport.stat(qpath) if qpath else None
             if not qstat or qstat.kind != "file":
                 failures.append({"path": qpath, "reason": "隔离文件缺失"})
                 quarantine_missing += 1
                 continue
-            if int(qstat.size) != int(entry.get("size") or 0):
-                failures.append({"path": qpath, "reason": "隔离文件大小与记录不一致"})
+            status, reason = _quarantine_integrity(
+                entry,
+                qstat,
+                verification_hashes.get(qpath),
+                hash_tool=hash_tool,
+                hash_error=hash_error,
+            )
+            if status in {"size_changed", "hash_mismatch", "incomplete"}:
+                failures.append({"path": qpath, "reason": reason})
+                if status == "incomplete":
+                    hash_incomplete += 1
                 continue
-            expected_hash = str(entry.get("backup_sha256") or "")
-            actual_hash = verification_hashes.get(qpath)
-            if (
-                expected_hash
-                and actual_hash
-                and len(actual_hash) == len(expected_hash)
-                and actual_hash != expected_hash
-            ):
-                failures.append({"path": qpath, "reason": "隔离文件 SHA-256 与记录不一致（内容可能已被替换）"})
-                continue
+            if status == "ok_hash":
+                hash_verified += 1
+            elif status == "size_only":
+                hash_unavailable += 1
             passed += 1
         elif entry.get("event") == "deleted":
             current = transport.stat(path) if path else None
@@ -928,6 +1004,9 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
             "failed": len(failures),
             "source_present": source_present,
             "quarantine_missing": quarantine_missing,
+            "hash_verified": hash_verified,
+            "hash_unavailable": hash_unavailable,
+            "hash_incomplete": hash_incomplete,
             "free_delta": free_delta,
         },
         "failures": failures,
@@ -972,12 +1051,7 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    qroot = str(execution.get("quarantine_root") or "")
-    all_roots = [str(root) for root in (execution.get("quarantine_roots") or []) if root]
-    if qroot and qroot not in all_roots:
-        all_roots.append(qroot)
-    if not all_roots:
-        raise SafetyError("execution 缺少 quarantine_root")
+    all_roots = _quarantine_roots(execution)
     hash_targets: list[str] = []
     for entry in entries:
         if entry.get("event") != "quarantined":
@@ -986,15 +1060,16 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             continue
         if not entry.get("backup_sha256"):
             continue
-        qpath = str(entry.get("quarantine_path") or "")
-        if qpath and any(is_under(qpath, root) for root in all_roots):
-            hash_targets.append(qpath)
-    quarantine_hashes: dict[str, str | None] = {}
-    if hash_targets:
         try:
-            quarantine_hashes = transport.hash_files(hash_targets)
-        except Exception:  # noqa: BLE001 - hashing is a best-effort extra check
-            quarantine_hashes = {}
+            qpath = normalize_device_path(str(entry.get("quarantine_path") or ""))
+        except Exception:  # noqa: BLE001 - rejected by the purge pass below
+            continue
+        if any(is_under(qpath, root) for root in all_roots):
+            hash_targets.append(qpath)
+    hash_tool, quarantine_hashes, hash_error = _hash_quarantine_files(transport, hash_targets)
+    hash_verified = 0
+    hash_unavailable = 0
+    hash_incomplete = 0
     purged = 0
     purged_bytes = 0
     missing = 0
@@ -1015,7 +1090,13 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             updated.append(entry)
             continue
         qpath = str(entry.get("quarantine_path") or "")
-        if not qpath or not any(is_under(qpath, root) for root in all_roots):
+        try:
+            qpath = normalize_device_path(qpath)
+        except Exception as exc:  # noqa: BLE001
+            failures.append({"path": str(entry.get("quarantine_path") or ""), "reason": f"记录中的路径非法：{exc}"})
+            updated.append(entry)
+            continue
+        if not any(is_under(qpath, root) for root in all_roots):
             failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内，拒绝"})
             updated.append(entry)
             continue
@@ -1029,11 +1110,23 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             failures.append({"path": qpath, "reason": "隔离目标不是普通文件"})
             updated.append(entry)
             continue
-        integrity = _quarantine_integrity_reason(entry, current, quarantine_hashes.get(qpath))
-        if integrity:
-            failures.append({"path": qpath, "reason": integrity})
+        status, reason = _quarantine_integrity(
+            entry,
+            current,
+            quarantine_hashes.get(qpath),
+            hash_tool=hash_tool,
+            hash_error=hash_error,
+        )
+        if status in {"size_changed", "hash_mismatch", "incomplete"}:
+            failures.append({"path": qpath, "reason": reason})
+            if status == "incomplete":
+                hash_incomplete += 1
             updated.append(entry)
             continue
+        if status == "ok_hash":
+            hash_verified += 1
+        elif status == "size_only":
+            hash_unavailable += 1
         try:
             transport.delete_file(qpath)
             if transport.stat(qpath) is not None:
@@ -1069,6 +1162,9 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         "failures": failures,
         "free_delta": free_delta,
         "free_after": free_after,
+        "hash_verified_files": hash_verified,
+        "hash_unavailable_files": hash_unavailable,
+        "hash_incomplete_files": hash_incomplete,
     }
     runs = _previous_runs(
         execution.get("purge"),
@@ -1077,6 +1173,9 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         fallback_at=str(execution.get("purged_at") or ""),
     )
     runs.append(run)
+    hash_verified_total = sum(int(item.get("hash_verified_files") or 0) for item in runs)
+    hash_unavailable_total = sum(int(item.get("hash_unavailable_files") or 0) for item in runs)
+    hash_incomplete_total = sum(int(item.get("hash_incomplete_files") or 0) for item in runs)
     execution["purged_at"] = run_at
     execution["purge"] = {
         # Cumulative truth from the journal: repeating purge must not erase
@@ -1088,6 +1187,9 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         "failures": run["failures"],
         "free_delta": run["free_delta"],
         "free_after": run["free_after"],
+        "hash_verified_files": hash_verified_total,
+        "hash_unavailable_files": hash_unavailable_total,
+        "hash_incomplete_files": hash_incomplete_total,
         "last_run": run,
         "runs": runs,
     }
@@ -1103,8 +1205,13 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         f"- 隔离区剩余：{remaining['remaining_files']} 个 / {human_bytes(remaining['remaining_bytes'])}",
         f"- 本次失败：{len(failures)}",
         f"- 可用空间变化：{human_bytes(free_delta)}",
-        "",
     ]
+    if hash_verified or hash_unavailable or hash_incomplete:
+        lines.append(
+            f"- 内容校验：{hash_verified} 个通过；{hash_unavailable} 个仅校验大小；"
+            f"{hash_incomplete} 个未完成"
+        )
+    lines.append("")
     if missing:
         lines.append(f"- 本次有 {missing} 个隔离文件在执行前已不存在，标记为 missing。")
         lines.append("")
@@ -1118,19 +1225,40 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             "purged_files": totals["purged_files"],
             "purged_bytes": totals["purged_bytes"],
             "missing_files": totals["missing_files"],
+            "hash_verified_files": hash_verified_total,
+            "hash_unavailable_files": hash_unavailable_total,
+            "hash_incomplete_files": hash_incomplete_total,
         },
         "quarantine_remaining": remaining,
         "runs": len(runs),
     }
 
 
-def restore(state: State, transport: Transport, ids: list[str] | None, restore_all: bool) -> dict[str, Any]:
+def restore(
+    state: State,
+    transport: Transport,
+    ids: list[str] | None,
+    restore_all: bool,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     execution, execution_path = load_execution(state)
     if execution.get("mode") != "quarantine":
         raise SafetyError("只有隔离模式可以 restore")
+    if config is None:
+        from .config import load_config
+
+        config = load_config(None)
     journal_path = execution.get("journal_path") or ""
     if not journal_path or not Path(journal_path).exists():
         raise ValidationError("journal.jsonl 缺失，无法恢复")
+    roots = _quarantine_roots(execution)
+    item_categories = {
+        str(item.get("id")): str(item.get("category") or "")
+        for item in execution.get("items") or []
+        if item.get("id")
+    }
+    platform = str(execution.get("platform") or "android")
+    packages = _load_restore_packages(state)
     selected = set(ids or [])
     entries: list[dict[str, Any]] = []
     restored = 0
@@ -1154,15 +1282,16 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
                 continue
             if not entry.get("backup_sha256"):
                 continue
-            qpath = str(entry.get("quarantine_path") or "")
-            if qpath:
+            try:
+                qpath = normalize_device_path(str(entry.get("quarantine_path") or ""))
+            except Exception:  # noqa: BLE001 - rejected by the restore pass below
+                continue
+            if any(is_under(qpath, root) for root in roots):
                 hash_targets.append(qpath)
-    quarantine_hashes: dict[str, str | None] = {}
-    if hash_targets:
-        try:
-            quarantine_hashes = transport.hash_files(hash_targets)
-        except Exception:  # noqa: BLE001 - hashing is a best-effort extra check
-            quarantine_hashes = {}
+    hash_tool, quarantine_hashes, hash_error = _hash_quarantine_files(transport, hash_targets)
+    hash_verified = 0
+    hash_unavailable = 0
+    hash_incomplete = 0
     with open(journal_path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -1179,10 +1308,46 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
             if not restore_all and item_id not in selected:
                 entries.append(entry)
                 continue
-            source = entry.get("path", "")
-            qpath = entry.get("quarantine_path", "")
-            if not source or not qpath:
-                failures.append({"path": str(source), "reason": "记录缺失"})
+            raw_source = entry.get("path", "")
+            raw_qpath = entry.get("quarantine_path", "")
+            if not raw_source or not raw_qpath:
+                failures.append({"path": str(raw_source), "reason": "记录缺失"})
+                entries.append(entry)
+                continue
+            try:
+                source = normalize_device_path(str(raw_source))
+                qpath = normalize_device_path(str(raw_qpath))
+            except Exception as exc:  # noqa: BLE001
+                failures.append({"path": str(raw_source), "reason": f"记录中的路径非法：{exc}"})
+                entries.append(entry)
+                continue
+            if not any(is_under(qpath, root) for root in roots):
+                failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内，拒绝恢复"})
+                entries.append(entry)
+                continue
+            category = item_categories.get(str(item_id), "")
+            if not category:
+                failures.append({"path": source, "reason": "无法从执行记录确定候选类别，拒绝恢复"})
+                entries.append(entry)
+                continue
+            try:
+                guard = guard_path(
+                    source,
+                    category,
+                    kind="file",
+                    packages=packages,
+                    config=config,
+                    platform=platform,
+                )
+            except Exception as exc:  # noqa: BLE001 - guard_path must fail closed
+                failures.append({"path": source, "reason": f"恢复目标路径校验失败：{exc}"})
+                entries.append(entry)
+                continue
+            if not guard.get("allowed"):
+                failures.append({
+                    "path": source,
+                    "reason": f"恢复目标不符合安全路径规则：{guard.get('reason') or '被拒绝'}",
+                })
                 entries.append(entry)
                 continue
             if transport.stat(source) is not None:
@@ -1194,11 +1359,23 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
                 failures.append({"path": qpath, "reason": "隔离文件缺失"})
                 entries.append(entry)
                 continue
-            integrity = _quarantine_integrity_reason(entry, qstat, quarantine_hashes.get(qpath))
-            if integrity:
-                failures.append({"path": qpath, "reason": integrity})
+            status, reason = _quarantine_integrity(
+                entry,
+                qstat,
+                quarantine_hashes.get(qpath),
+                hash_tool=hash_tool,
+                hash_error=hash_error,
+            )
+            if status in {"size_changed", "hash_mismatch", "incomplete"}:
+                failures.append({"path": qpath, "reason": reason})
+                if status == "incomplete":
+                    hash_incomplete += 1
                 entries.append(entry)
                 continue
+            if status == "ok_hash":
+                hash_verified += 1
+            elif status == "size_only":
+                hash_unavailable += 1
             try:
                 transport.mkdirs(os.path.dirname(source).replace("\\", "/"))
                 transport.move(qpath, source)
@@ -1223,6 +1400,9 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
         "restored_bytes": restored_bytes,
         "failed": len(failures),
         "failures": failures,
+        "hash_verified_files": hash_verified,
+        "hash_unavailable_files": hash_unavailable,
+        "hash_incomplete_files": hash_incomplete,
     }
     runs = _previous_runs(
         execution.get("restore"),
@@ -1231,6 +1411,9 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
         fallback_at=str(execution.get("restored_at") or ""),
     )
     runs.append(run)
+    hash_verified_total = sum(int(item.get("hash_verified_files") or 0) for item in runs)
+    hash_unavailable_total = sum(int(item.get("hash_unavailable_files") or 0) for item in runs)
+    hash_incomplete_total = sum(int(item.get("hash_incomplete_files") or 0) for item in runs)
     execution["restored_at"] = run_at
     execution["restore"] = {
         # Cumulative truth from the journal: restoring in several batches must
@@ -1239,6 +1422,9 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
         "restored_bytes": totals["restored_bytes"],
         "failed": run["failed"],
         "failures": run["failures"],
+        "hash_verified_files": hash_verified_total,
+        "hash_unavailable_files": hash_unavailable_total,
+        "hash_incomplete_files": hash_incomplete_total,
         "last_run": run,
         "runs": runs,
     }
@@ -1252,8 +1438,13 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
         f"- 累计恢复：{totals['restored_files']} 个 / {human_bytes(totals['restored_bytes'])}",
         f"- 隔离区剩余：{remaining['remaining_files']} 个 / {human_bytes(remaining['remaining_bytes'])}",
         f"- 本次失败：{len(failures)}",
-        "",
     ]
+    if hash_verified or hash_unavailable or hash_incomplete:
+        lines.append(
+            f"- 内容校验：{hash_verified} 个通过；{hash_unavailable} 个仅校验大小；"
+            f"{hash_incomplete} 个未完成"
+        )
+    lines.append("")
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")
     (out_dir / "report-restore.md").write_text("\n".join(lines), encoding="utf-8")
@@ -1263,6 +1454,9 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
         "cumulative": {
             "restored_files": totals["restored_files"],
             "restored_bytes": totals["restored_bytes"],
+            "hash_verified_files": hash_verified_total,
+            "hash_unavailable_files": hash_unavailable_total,
+            "hash_incomplete_files": hash_incomplete_total,
         },
         "quarantine_remaining": remaining,
         "runs": len(runs),
