@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.7.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.7.1`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -567,7 +567,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.7.0: 236 passed, 1 skipped (237 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.7.1: 236 passed, 1 skipped (237 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -616,6 +616,7 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - The directory archive and coverage changes have not been accepted on a real device.
 - The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences.
 - App-level storage only covers base APKs and external directories. Internal data/cache require StorageStatsManager permissions or root and are explicitly unknown. `dumpsys diskstats` is not used because it writes a system cache; no helper APK is included.
+- Permanent delete (purge) has only been exercised on self-created test files; real user data is not accepted yet.
 - HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, it does not use Android MediaStore, and `bm clean` is not wired into the executor.
 - The on-device Termux / Shizuku paths have not been accepted on a real device.
 
@@ -628,7 +629,7 @@ Real-device status:
 | App-level storage (partial) | 1 device passed: HONOR HLK-AL00; 293 apps, 8.98 GB base APKs, 1.92 GB external data; internal data/cache not read |
 | Quarantine / verify / restore | 1 device passed, self-created test files only |
 | Cleanup of real user data | 0 devices accepted |
-| Permanent delete (purge) | Not verified on a real device |
+| Permanent delete (purge) | 1 device passed: two self-created test files (30 B); wrong token refused |
 | Shizuku / native Termux | Not verified on a real device |
 | HarmonyOS NEXT (hdc) | 0 devices accepted |
 

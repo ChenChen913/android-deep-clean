@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.1 — purge 真机验证
+
+### Verified
+- 真机（HONOR HLK-AL00 / Android 10）自建测试文件验证永久删除：2 个文件 / 30 B，`quarantine purge` 2/2 成功、0 失败，可用空间增加；错误 purge 令牌被拒绝（退出码 3）。
+- 重放同一 purge 令牌为幂等操作：`purged_files=0`，不报错、不误删其他文件。
+- purge 后 `restore` 如实报告 2 个文件失败（已永久删除，无法恢复），没有伪造成功。
+- 演练结束后删除手机测试目录与空隔离目录；未触碰任何用户真实文件。
+- 全量 236 passed, 1 skipped（无代码改动）。
+
+### Limitations
+- purge 仅在自建测试文件上验证；对用户真实数据的永久删除仍未验收。
+
 ## v1.7.0 — 确认令牌单次使用
 
 ### Changed

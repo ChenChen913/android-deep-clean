@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.7.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.7.1`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -590,7 +590,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.7.0 实测：236 passed, 1 skipped（237 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.7.1 实测：236 passed, 1 skipped（237 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -639,6 +639,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 目录档案与覆盖率改动尚未完成真机验收。
 - MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。
 - 应用级存储只统计基础 APK 与外部目录；内部 data/cache 需要 StorageStatsManager 权限或 Root，本版本明确标记为未知。未使用会写系统缓存的 `dumpsys diskstats`，也未开发辅助 APK。
+- 永久删除（purge）只在自建测试文件上验证过；对用户真实数据尚未验收。
 - HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，也不使用 Android MediaStore；`bm clean` 未接入执行器。
 - 手机端 Termux / Shizuku 通路尚未完成真机验收。
 
@@ -650,8 +651,8 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 | MediaStore 只读索引 | 1 台通过：HONOR HLK-AL00；图片/视频/音频可用，`downloads` 在该 ROM 不可用；4,965 条索引中 4,964 条匹配，范围内缺失 0 条 |
 | 应用级存储（部分） | 1 台通过：HONOR HLK-AL00；293 个应用基础 APK 8.98 GB，外部 data 1.92 GB；内部 data/cache 未读取 |
 | 隔离 / 验证 / 恢复 | 1 台通过，仅自建测试文件 |
+| 永久删除（purge） | 1 台通过：自建 2 个测试文件（30 B），purge 2/2 成功，可用空间增加；错误令牌被拒绝 |
 | 用户真实数据清理 | 0 台完成验收 |
-| 永久删除（purge） | 真机未验证 |
 | Shizuku / Termux 原生环境 | 真机未验证 |
 | HarmonyOS NEXT（hdc） | 0 台完成验收 |
 
