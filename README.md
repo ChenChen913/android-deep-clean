@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.9.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.9.1`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -475,7 +475,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 验证统计与异常、隔离区占用、purge / restore 结果、可用空间记录。
 - 剩余问题、后续命令与安全说明；未验证的步骤不会显示为通过。
 
-两份报告都在主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。报告包含设备序列号与文件路径，分享前请自行脱敏。HTML 不改变候选、风险或可选择性，也不构成删除授权。
+两份报告都在主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。报告使用暖色浅色主题，页头、吸顶目录、区块与卡片带液态玻璃质感，深色模式为暖棕配色。报告包含设备序列号与文件路径，分享前请自行脱敏。HTML 不改变候选、风险或可选择性，也不构成删除授权。
 
 ### 命令总表
 
@@ -609,7 +609,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.9.0 实测：247 passed, 1 skipped（248 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.9.1 实测：247 passed, 1 skipped（248 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.9.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.9.1`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -457,7 +457,7 @@ After execution, `execution/report-cleanup.html` is written and refreshed by `ve
 - Verification stats and anomalies, quarantine occupancy, purge/restore results and free-space records.
 - Remaining issues, suggested commands and safety notes; unverified steps are never shown as passed.
 
-Both reports are rendered on the host, never touch the device, HTML-escape every path and evidence string, and show at most 400 candidates per run (the full manifest stays in `analysis.db`). They contain the device serial and file paths; redact before sharing. They do not change candidates, risks or selectability, and they are not deletion authorization.
+Both reports are rendered on the host, never touch the device, HTML-escape every path and evidence string, and show at most 400 candidates per run (the full manifest stays in `analysis.db`). They use a warm light palette with frosted-glass headers, sticky navigation, blocks and cards; dark mode uses a warm espresso palette. They contain the device serial and file paths; redact before sharing. They do not change candidates, risks or selectability, and they are not deletion authorization.
 
 ### Command reference
 
@@ -586,7 +586,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.9.0: 247 passed, 1 skipped (248 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.9.1: 247 passed, 1 skipped (248 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
