@@ -164,6 +164,29 @@ def test_execute_requires_selection_and_valid_token(env):
     env.assert_unchanged(before)
 
 
+def test_confirmation_token_cannot_be_reused(env):
+    """A used token must never move files a second time after a restore."""
+    _cache_fixture(env)
+    env.select_all_safe()
+    env.execute_ok()
+    token = str(env.selection.get("token") or "")
+    selection_id = str(env.selection.get("selection_id") or "")
+    assert token
+
+    # Restore puts the files back; the old token must still be refused.
+    env.ok("restore", "--all")
+    assert env.phone.exists(CACHE + "/a.bin")
+
+    env.execute(token=token).expect_error(3)
+    assert env.phone.exists(CACHE + "/a.bin"), "a replayed token must not move files again"
+    consumed = env.state_json("execution/consumed-tokens.json")
+    assert consumed and selection_id in {item.get("selection_id") for item in consumed.values()}
+
+    # A fresh selection produces a usable new token.
+    env.select_all_safe()
+    env.execute_ok()
+
+
 # ---------------------------------------------------------------- denied operations
 def test_denied_move_reports_failure_and_keeps_source(env):
     blocked = CACHE + "/blocked.bin"

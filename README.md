@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.6.2`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.7.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -450,6 +450,14 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 
 > 设备已用 78.81 GB，共享存储文件扫描 11.08 GB（占已用空间 14.1%），加上基础 APK 后仍有 58.75 GB 未解释。
 
+### 确认令牌单次使用（v1.7.0）
+
+`execute` 成功后会把该确认令牌的哈希记录到 `execution/consumed-tokens.json`。同一令牌再次使用会被拒绝（退出码 3）：
+
+- 即使之后运行 `restore` 把文件恢复，旧令牌仍然失效；
+- 需要继续清理时必须重新 `scan → analyze → plan → select`，让用户重新确认；
+- 五个安全闸门仍然全部保留：`plan_hash`、`selection_hash`、设备身份、文件清单摘要、执行前逐文件 stat。
+
 ### 命令总表
 
 | 命令 | 用途 | 修改设备 |
@@ -582,7 +590,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.6.2 实测：235 passed, 1 skipped（236 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.7.0 实测：236 passed, 1 skipped（237 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

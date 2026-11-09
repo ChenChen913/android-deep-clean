@@ -43,6 +43,7 @@ from .util import (
     random_token,
     read_json,
     sha256_file,
+    sha256_text,
 )
 
 
@@ -86,6 +87,34 @@ class Executor:
             conn.close()
 
     # ------------------------------------------------------------- preflight
+    def _consumed_path(self) -> Path:
+        return self.exec_dir / "consumed-tokens.json"
+
+    def _consumed_tokens(self) -> dict[str, dict[str, Any]]:
+        data = read_json(self._consumed_path(), default=None)
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+    def _token_consumed(self, token: str) -> bool:
+        if not token:
+            return False
+        return sha256_text(str(token)) in self._consumed_tokens()
+
+    def _mark_consumed(self, selection: dict[str, Any], execution: dict[str, Any]) -> None:
+        token = str(selection.get("token") or "")
+        if not token:
+            return
+        consumed = self._consumed_tokens()
+        consumed[sha256_text(token)] = {
+            "selection_id": selection.get("selection_id", ""),
+            "execution_id": execution.get("execution_id", ""),
+            "status": execution.get("status", ""),
+            "mode": execution.get("mode", ""),
+            "consumed_at": execution.get("finished_at", ""),
+        }
+        atomic_write_json(self._consumed_path(), consumed)
+
     def _load_analysis_db(self, plan: dict[str, Any]) -> sqlite3.Connection:
         path = plan.get("analysis_db_path") or ""
         db_path = Path(path) if path else None
@@ -104,6 +133,12 @@ class Executor:
         self.platform = str(plan.get("platform") or selection.get("platform") or "android")
         if not token or not hmac.compare_digest(str(token), str(selection.get("token") or "")):
             raise SafetyError("确认令牌不匹配。请使用 select 输出中的令牌，并确认用户已明确同意。")
+        if self._token_consumed(token):
+            raise SafetyError(
+                "该确认令牌已执行过，不能重复使用。"
+                "如果上一次执行被恢复或只完成了一部分，请重新 scan → analyze → plan → select，"
+                "让用户重新确认后再执行。"
+            )
         if plan.get("plan_hash") != selection.get("plan_hash"):
             raise SafetyError("selection 与 plan 的 plan_hash 不一致，拒绝执行")
         if _recompute_plan_hash(plan) != plan.get("plan_hash"):
@@ -299,6 +334,7 @@ class Executor:
             ],
         }
         atomic_write_json(self.exec_dir / "execution.json", execution)
+        self._mark_consumed(selection, execution)
         if self.backup_root is not None:
             atomic_write_json(self.exec_dir / "backup-manifest.json", {
                 "execution_id": self.execution_id,

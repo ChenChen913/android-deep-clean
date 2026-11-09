@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.6.2`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.7.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -432,6 +432,14 @@ Real-device example (HONOR HLK-AL00):
 
 > Device used 78.81 GB; shared-storage scan 11.08 GB (14.1% of used); after adding base APKs, 58.75 GB remains unexplained.
 
+### Single-use confirmation tokens (v1.7.0)
+
+After a successful `execute`, the token hash is recorded in `execution/consumed-tokens.json`. Reusing the same token is refused (exit code 3):
+
+- the token stays invalid even after `restore` puts the files back;
+- continuing requires a fresh `scan → analyze → plan → select` and a new user confirmation;
+- all five existing gates remain: `plan_hash`, `selection_hash`, device identity, file-manifest digest, and the per-file pre-execution `stat` check.
+
 ### Command reference
 
 | Command | Purpose | Modifies the phone |
@@ -559,7 +567,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.6.2: 235 passed, 1 skipped (236 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.7.0: 236 passed, 1 skipped (237 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

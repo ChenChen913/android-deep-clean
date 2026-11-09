@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.7.0 — 确认令牌单次使用
+
+### Changed
+- 确认令牌改为单次使用：`execute` 成功后把令牌哈希写入 `execution/consumed-tokens.json`；再次使用同一令牌会被拒绝（退出码 3），必须重新 `scan → analyze → plan → select` 并获得新的用户确认。
+- 恢复（`restore`）之后旧令牌仍然失效，避免“恢复后又被人用旧命令再次隔离”。
+
+### Verified
+- 真机（HONOR HLK-AL00 / Android 10）自建测试文件完整演练：
+  - 建 3 个测试文件（26 / 31 / 36 B），mtime 设为 2023-01-01；
+  - `scan → analyze → plan → select` 仅生成 1 个 SAFE 候选，路径全部在测试目录内；
+  - `execute`（隔离）3/3 成功，`verify` 3/3 通过，源目录清空、隔离区 3 个文件；
+  - `restore --all` 3/3 成功，SHA-256、大小、mtime 与演练前完全一致，隔离区清空；
+  - 旧令牌重放被拒绝（rc=3），文件保持原位；
+  - 演练结束后已删除手机测试目录与空隔离目录。
+- 新增 1 个令牌重放回归测试；全量 236 passed, 1 skipped。
+
+### Notes
+- 本次升级前已执行过的旧令牌没有历史记录，升级后第一次重放仍可能通过；之后所有新令牌都会记录。生产使用前建议重新 `select`。
+
 ## v1.6.2 — 限定目录扫描不再稀释媒体匹配率
 
 ### Fixed
