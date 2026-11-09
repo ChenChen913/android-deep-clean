@@ -185,6 +185,44 @@ class MockTransport(Transport):
             return self._mock_content_query(parts)
         if parts[:1] == ["stat"]:
             return self._mock_stat(parts)
+        if parts[:2] == ["pm", "path"] and len(parts) >= 3:
+            package = parts[2]
+            data = self._load_packages()
+            paths = data.apk_path_list.get(package) or []
+            if not paths and data.apk_paths.get(package):
+                paths = [data.apk_paths[package]]
+            if not paths:
+                return 1, "", f"Error: package {package} not found"
+            return 0, "".join(f"package:{path}\n" for path in paths), ""
+        if parts[:3] == ["pm", "list", "packages"]:
+            data = self._load_packages()
+            lines = [
+                f"package:{data.apk_paths[package]}={package}"
+                for package in sorted(data.installed)
+                if data.apk_paths.get(package)
+            ]
+            return 0, "\n".join(lines) + ("\n" if lines else ""), ""
+        if parts[:2] == ["command", "-v"]:
+            return 0, "0\n", ""
+        if parts[:2] == ["du", "-sk"]:
+            lines: list[str] = []
+            for device_path in [item for item in parts[2:] if item.startswith("/")]:
+                if self._cap_blocked(device_path):
+                    lines.append(f"du: {device_path}: Permission denied")
+                    continue
+                try:
+                    host, _ = self._map(device_path)
+                except TransportError:
+                    continue
+                if not host.exists():
+                    continue
+                if host.is_dir():
+                    total = sum(path.stat().st_size for path in host.rglob("*") if path.is_file())
+                else:
+                    total = host.stat().st_size
+                kb = (total + 1023) // 1024 if total else 0
+                lines.append(f"{kb}\t{device_path}")
+            return 0, "\n".join(lines) + ("\n" if lines else ""), ""
         raise TransportError("mock transport 不执行任意 shell 命令")
 
     def _mock_stat(self, parts: list[str]) -> tuple[int, str, str]:
@@ -246,6 +284,8 @@ class MockTransport(Transport):
             return 1, "", "mock: MediaStore fixture 未提供（caps.media_store）"
         if media.get("unavailable"):
             return 1, "", str(media.get("reason") or "mock: MediaStore 不可用")
+        if media.get("reject_sort") and "--sort" in parts:
+            return 1, "", "Error: Unknown option --sort"
         rejected = [
             column for column in projection
             if column in (media.get("reject_columns") or {}).get(collection, [])

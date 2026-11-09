@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.9.5`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.10.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -393,6 +393,8 @@ Host-side output:
 - `scan_only`: in the file snapshot but not in the index; may be unindexed, hidden or app-private media. **Not an anomaly.**
 - `size_mismatch`: the index may be stale; filesystem wins.
 - `trashed` / `pending`: index state hints only.
+- **Zero-row diagnosis**: each collection is `ok` / `empty` / `zero_mismatch` / `failed` / `skipped`. A successful query with 0 rows is `zero_mismatch` when the filesystem scan found at least the threshold (default 10) of same-kind files; the overall status becomes `partial` and the report says the media library must not be treated as empty. With no same-kind files it is `empty`, not a failure.
+- `sources.json` records the actual command, projection, exit code, stderr, row count, attempts and elapsed time for diagnosis.
 
 The media index is evidence only. It never creates candidates, changes risk or selectability, and its size is not added to the file-scan total.
 
@@ -407,27 +409,29 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-app-storage
 ```
 
-It runs `pm list packages -f` and batched `stat`, writes `scan/aux/app-storage.json`, and does not read file contents or require root.
+It runs `pm list packages -f`, a bounded number of `pm path <package>` calls (default up to 120 apps) to find base and split APKs, and batched `stat`; it writes `scan/aux/app-storage.json`. Base APK stats need no root. Internal `/data/data` is only read with a bounded read-only `du` when the transport has root/su.
 
 `analyze` adds `summary.app_storage` and an "App-level storage (partial)" report section:
 
-- Known: base APK, external `Android/data` / `Android/media` / `Android/obb`, external cache.
-- Unknown: app-internal data/cache, split APKs.
+- Known: base APK, discovered split APKs, external `Android/data` / `Android/media` / `Android/obb`, external cache.
+- Conditionally known: app-internal data/cache/code_cache via read-only `du` under root/su (default up to 60 apps, prioritising large external-data packages).
+- Unknown/partial: internal data under a plain shell, apps beyond the split-query budget, and paths that are missing, permission-denied or fail `stat`.
+- Statuses distinguish `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`; unknown data is never written as 0 MB.
 - Lists top apps by external storage and uninstalled packages that still have external directories.
 - App-related candidates gain package-level evidence only; risk and selectability do not change.
 
-**Why it is partial**: a plain ADB shell lacks StorageStatsManager permissions for other apps' internal data. `dumpsys diskstats` writes a system cache file, so it is not used because scans must stay read-only. A helper APK would need extra grants and long-term maintenance, so it is not included. The known total is not the app's total footprint and must not be added to device-used space.
+**Why it is partial**: a plain ADB shell lacks StorageStatsManager permissions for other apps' internal data. `dumpsys diskstats` writes a system cache file, so it is not used because scans must stay read-only. Root/su internal stats use a bounded read-only `du` sample, not a full scan; split APK queries also have an app budget. The known total is not the app's total footprint and must not be added to device-used space.
 
-Real-device result (HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. Internal data/cache were not read; no files were modified.
+Historical real-device result (v1.5.0 / HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. The v1.10.0 split-APK and internal-data paths are mock/unit tested only and were **not re-validated on a real device**.
 
 ### Space story and candidate explanations (v1.6.0)
 
 `report-before.md` now opens with a "Space story" section that does the bookkeeping for the reader:
 
-- Lists device used, file scan, base APK, app external directories and media index, each with its own measurement.
+- Lists device used, file scan, APK (base + split), readable internal data, app external directories and media index, each with its own measurement.
 - Marks whether each row overlaps another one.
-- Gives a "known and non-overlapping total" (file scan + base APK) and an "unexplained gap".
-- States explicitly that app external directories and the media index are already inside the file scan and must not be added again.
+- Gives a "known and non-overlapping total" (file scan + APK + readable internal data) and an "unexplained gap".
+- States explicitly that app external directories and the media index are already inside the file scan and must not be added again; internal cache is a subset of internal data.
 
 Every candidate also gets three fixed lines: what it is, why it was listed, and what deleting it changes. These are readability-only and do not alter risk, selectability or the file manifest; `analysis-summary.json` items carry the same `explain` field.
 
@@ -558,10 +562,13 @@ Key default thresholds (source: `scripts/adc_lib/config.py`):
 | `media_store.collections` | four collections | `images/video/audio/downloads` |
 | `media_store.timeout_seconds` | 60 | Per-collection query timeout |
 | `media_store.max_items` | 200000 | Index row cap; marks the result truncated |
-| `app_storage.enabled` | `true` | Collect base APK sizes |
-| `app_storage.timeout_seconds` | 30 | Per-batch `stat` timeout |
+| `media_store.zero_crosscheck_min_files` | 10 | Minimum same-kind filesystem files before a 0-row result is `zero_mismatch` |
+| `app_storage.enabled` | `true` | Collect APK and internal storage data |
+| `app_storage.timeout_seconds` | 30 | Per-batch `stat` / `pm path` / `du` timeout |
 | `app_storage.max_packages` | 1000 | Maximum packages collected |
 | `app_storage.top_apps` | 15 | Apps shown in the report |
+| `app_storage.split_apk_max_packages` | 120 | Maximum apps queried with `pm path`; the rest use base APKs only |
+| `app_storage.internal_max_packages` | 60 | Maximum apps sampled with `du` under root/su |
 
 ## Project structure
 
@@ -588,7 +595,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.9.5: 264 passed, 1 skipped (265 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.10.0: 281 passed, 2 skipped (283 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -635,8 +642,10 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - The directory archive is path-based: a rename appears as "missing + new". Incomplete scans and environment changes suppress vanished conclusions.
 - The archive tracks directories ≥10 MiB and app directories by default; app-version detection needs `pm list packages --show-versioncode`.
 - The directory archive and coverage changes have not been accepted on a real device.
-- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences.
-- App-level storage only covers base APKs and external directories. Internal data/cache require StorageStatsManager permissions or root and are explicitly unknown. `dumpsys diskstats` is not used because it writes a system cache; no helper APK is included.
+- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan and only become `zero_mismatch` when the same-kind file count reaches the threshold.
+- App-level storage: base APKs need no root; split-APK discovery has an app budget; internal data/cache are only sampled with read-only `du` under root/su. Plain shells are explicitly marked unavailable. `dumpsys diskstats` is not used because it writes a system cache; no StorageStatsManager helper APK is included.
+- Hidden/special caches are matched only by name/extension plus an allowed root, and every such candidate is CAUTION/review-required. Vendor top-level directories may contain user data and are not auto-classified as cache.
+- Quarantine path checks use `realpath` to narrow the TOCTOU window, but adb shell cannot provide `openat/O_NOFOLLOW` atomic guarantees; an unresolvable real path is always refused.
 - Permanent delete (purge) has only been exercised on self-created test files; real user data is not accepted yet.
 - HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, it does not use Android MediaStore, and `bm clean` is not wired into the executor.
 - The on-device Termux / Shizuku paths have not been accepted on a real device.

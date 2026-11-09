@@ -138,3 +138,72 @@ def test_app_storage_never_changes_candidates(env):
     after_enable = _signature(env)
     assert baseline == after_enable
     assert not [item for item in env.analysis["items"] if item["category"] == "app_storage"]
+
+
+def test_split_apk_paths_are_summed(env):
+    split = "/data/app/com.installed.app/split_config.arm64_v8a.apk"
+    env.phone.file(APK, size=500)
+    env.phone.file(split, size=200)
+    env.phone.file(DATA + "/cache/a.bin", size=300)
+    env.set_packages(
+        installed=[PKG],
+        uninstalled=[],
+        system=["android"],
+        available=True,
+        apk_paths={PKG: [APK, split]},
+        versions={PKG: "1.0"},
+    )
+    env.prepare_analysis()
+    app = _app(env)
+    assert app["known"]["apk_base_bytes"] == 500
+    assert app["known"]["apk_split_bytes"] == 200
+    assert app["known"]["apk_bytes"] == 700
+    assert app["known"]["apk_file_count"] == 2
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    assert manifest["apk"]["split_status"] == "collected"
+    assert manifest["packages"][0]["apk_file_count"] == 2
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "Split APK" in report
+
+
+def test_root_internal_data_is_collected_read_only(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.phone.file("/data/data/com.installed.app/code_cache/d.bin", size=200)
+    env.set_caps(privilege="root")
+    env.prepare_analysis()
+    app = _app(env)
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    assert manifest["internal"]["status"] == "collected"
+    assert manifest["internal"]["data_bytes"] >= 1600
+    assert app["known"]["internal_data_bytes"] >= 1600
+    assert app["known"]["internal_cache_bytes"] >= 400
+    assert "只读 du" in app["unknown"]["internal_data"]
+    assert app["capabilities"]["root"] is True
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "内部 data / cache" in report
+
+
+def test_root_permission_denied_is_not_reported_as_zero(env):
+    _setup(env)
+    env.set_caps(privilege="root", inaccessible=["/data/data"])
+    env.prepare_analysis()
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    assert manifest["internal"]["status"] == "permission_denied"
+    assert manifest["packages"][0]["internal_status"] == "permission_denied"
+    assert manifest["packages"][0]["internal_data_bytes"] is None
+    app = _app(env)
+    assert app["unknown"]["internal_data"].startswith("不可读")
+
+
+def test_apk_permission_denied_is_explicit(env):
+    _setup(env)
+    env.set_caps(inaccessible=["/data/app"])
+    env.prepare_analysis()
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["status"] == "permission_denied"
+    assert entry["apk_bytes"] is None
+    assert manifest["status"] in {"partial", "unavailable"}
+    assert any("权限" in item or "permission" in item.lower() for item in manifest["limitations"])

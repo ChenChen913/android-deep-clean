@@ -46,6 +46,12 @@
 - 抖音 com.ss.android.ugc.aweme、快手 com.smile.gifmaker：cache 可清，离线缓存/草稿/作品目录必须保护；不要把整个应用目录当缓存。
 - B 站/腾讯视频/爱奇艺/优酷：cache 可清；离线下载目录保护或逐项。
 
+### 特殊/隐藏缓存（v1.10.0）
+- 扫描包含隐藏目录；分析只按“名称/扩展名 + 允许根目录”识别，隐藏属性本身不是清理依据。
+- .qcl、.cache、.ucache、.webcache、Code Cache、GPUCache、Service Worker、CacheStorage：仅在 /sdcard/Android/data 或已知聊天根目录内识别；一律 CAUTION/待确认，不进入 SAFE。
+- .qcl 在腾讯/QQ 应用目录下命中 `tencent-qcl` 规则；其他应用下标记“来源未确认”，仍为 CAUTION。
+- 不在 DCIM、Documents 等用户媒体目录按隐藏名称清理；厂商顶层目录（MIUI/Huawei/OPPO/vivo）可能混有用户数据，不自动认定为缓存。
+
 ### 卸载残留
 - 判断：pm list packages 已安装集合中不存在该包；pm list packages -u 可能仍列出残留记录。
 - 位置：/sdcard/Android/data/<pkg>、/sdcard/Android/obb/<pkg>、/sdcard/Android/media/<pkg>、/data/data/<pkg>（仅 root）。

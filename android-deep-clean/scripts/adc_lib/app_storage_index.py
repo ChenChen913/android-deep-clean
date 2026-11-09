@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS app_storage (
     version TEXT NOT NULL DEFAULT '',
     apk_path TEXT NOT NULL DEFAULT '',
     apk_bytes INTEGER,
+    apk_base_bytes INTEGER,
+    apk_split_bytes INTEGER,
+    apk_file_count INTEGER NOT NULL DEFAULT 0,
+    apk_status TEXT NOT NULL DEFAULT '',
+    internal_data_bytes INTEGER,
+    internal_cache_bytes INTEGER,
+    internal_code_cache_bytes INTEGER,
+    internal_status TEXT NOT NULL DEFAULT '',
     external_data_bytes INTEGER NOT NULL DEFAULT 0,
     external_media_bytes INTEGER NOT NULL DEFAULT 0,
     external_obb_bytes INTEGER NOT NULL DEFAULT 0,
@@ -135,10 +143,29 @@ class AppStorageIndex:
             system = package in self.packages.system
             apk_bytes = apk.get("apk_bytes")
             apk_bytes = int(apk_bytes) if isinstance(apk_bytes, int) else None
-            total = (apk_bytes or 0) + external_total
-            if not installed and external_total == 0 and apk_bytes is None:
+            apk_base = apk.get("apk_base_bytes")
+            apk_base = int(apk_base) if isinstance(apk_base, int) else None
+            apk_split = apk.get("apk_split_bytes")
+            apk_split = int(apk_split) if isinstance(apk_split, int) else None
+            internal_data = apk.get("internal_data_bytes")
+            internal_data = int(internal_data) if isinstance(internal_data, int) else None
+            internal_cache = apk.get("internal_cache_bytes")
+            internal_cache = int(internal_cache) if isinstance(internal_cache, int) else None
+            internal_code_cache = apk.get("internal_code_cache_bytes")
+            internal_code_cache = int(internal_code_cache) if isinstance(internal_code_cache, int) else None
+            total = (apk_bytes or 0) + (internal_data or 0) + external_total
+            if not installed and external_total == 0 and apk_bytes is None and internal_data is None:
                 continue
             info = app_info(package)
+            coverage_parts = []
+            if apk_base is not None:
+                coverage_parts.append("apk_base")
+            if apk_split is not None and apk_split > 0:
+                coverage_parts.append("apk_split")
+            if internal_data is not None:
+                coverage_parts.append("internal")
+            if external_total:
+                coverage_parts.append("external")
             self.rows.append({
                 "package": package,
                 "label": info.get("label", package),
@@ -148,6 +175,14 @@ class AppStorageIndex:
                 "version": self.packages.versions.get(package, ""),
                 "apk_path": str(apk.get("apk_path") or self.packages.apk_paths.get(package, "")),
                 "apk_bytes": apk_bytes,
+                "apk_base_bytes": apk_base,
+                "apk_split_bytes": apk_split,
+                "apk_file_count": _int(apk.get("apk_file_count"), 0),
+                "apk_status": str(apk.get("status") or ""),
+                "internal_data_bytes": internal_data,
+                "internal_cache_bytes": internal_cache,
+                "internal_code_cache_bytes": internal_code_cache,
+                "internal_status": str(apk.get("internal_status") or ""),
                 "external_data_bytes": data,
                 "external_media_bytes": media,
                 "external_obb_bytes": obb,
@@ -155,19 +190,24 @@ class AppStorageIndex:
                 "external_total_bytes": external_total,
                 "total_known_bytes": total,
                 "residue": (not installed) and external_total > 0,
-                "coverage": "apk_base+external" if apk_bytes is not None else "external_only",
+                "coverage": "+".join(coverage_parts) or "unknown",
             })
         if self.rows:
             db.executemany(
                 """INSERT OR REPLACE INTO app_storage
                 (package,label,kind,installed,system,version,apk_path,apk_bytes,
+                 apk_base_bytes,apk_split_bytes,apk_file_count,apk_status,
+                 internal_data_bytes,internal_cache_bytes,internal_code_cache_bytes,internal_status,
                  external_data_bytes,external_media_bytes,external_obb_bytes,external_cache_bytes,
                  total_known_bytes,residue,coverage)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
                         row["package"], row["label"], row["kind"], 1 if row["installed"] else 0,
                         1 if row["system"] else 0, row["version"], row["apk_path"], row["apk_bytes"],
+                        row["apk_base_bytes"], row["apk_split_bytes"], row["apk_file_count"], row["apk_status"],
+                        row["internal_data_bytes"], row["internal_cache_bytes"], row["internal_code_cache_bytes"],
+                        row["internal_status"],
                         row["external_data_bytes"], row["external_media_bytes"], row["external_obb_bytes"],
                         row["external_cache_bytes"], row["total_known_bytes"], 1 if row["residue"] else 0,
                         row["coverage"],
@@ -236,38 +276,54 @@ class AppStorageIndex:
         external_rows = [row for row in self.rows if row["external_total_bytes"] > 0]
         residue_rows = [row for row in self.rows if row["residue"]]
         apk_bytes = sum(row["apk_bytes"] or 0 for row in self.rows if row["apk_bytes"] is not None)
+        apk_base_bytes = sum(row["apk_base_bytes"] or 0 for row in self.rows if row["apk_base_bytes"] is not None)
+        apk_split_bytes = sum(row["apk_split_bytes"] or 0 for row in self.rows if row["apk_split_bytes"] is not None)
+        apk_file_count = sum(int(row["apk_file_count"] or 0) for row in self.rows)
+        internal_data_bytes = sum(row["internal_data_bytes"] or 0 for row in self.rows)
+        internal_cache_bytes = sum(row["internal_cache_bytes"] or 0 for row in self.rows)
         data_bytes = sum(row["external_data_bytes"] for row in self.rows)
         media_bytes = sum(row["external_media_bytes"] for row in self.rows)
         obb_bytes = sum(row["external_obb_bytes"] for row in self.rows)
         cache_bytes = sum(row["external_cache_bytes"] for row in self.rows)
         external_total = data_bytes + media_bytes + obb_bytes
-        total = apk_bytes + external_total
+        total = apk_bytes + internal_data_bytes + external_total
         limitations = list(self.limitations)
         if not self.apk_available and self.manifest_status not in {"disabled", "unsupported"}:
-            limitations.append("APK 基础大小不可用；外部 data/media/obb 仍来自文件扫描。")
+            limitations.append("APK 大小不可用；外部 data/media/obb 仍来自文件扫描。")
         if self.manifest_status == "disabled":
-            limitations.append("本轮未采集 APK 基础大小（--no-app-storage 或配置关闭）；外部目录仍来自文件扫描。")
-        limitations.append("内部 data/cache 与 split APK 未计入；本区块的合计不能当作应用总占用，也不能与设备已用空间相加。")
+            limitations.append("本轮未采集 APK 大小（--no-app-storage 或配置关闭）；外部目录仍来自文件扫描。")
+        limitations.append("内部 data 包含 cache/code_cache；外部 data 包含外部 cache；分项是子集，不能重复相加。")
         if self._dir_stats_ok:
             self.status = self.manifest_status
-            if self.status in {"not_collected", "unavailable"} and external_total:
+            if self.status in {"not_collected", "unavailable"} and (external_total or internal_data_bytes):
                 self.status = "partial"
             if self.status in {"disabled", "unsupported"}:
                 self.available = False
             else:
-                self.available = self.apk_available or bool(external_total)
+                self.available = self.apk_available or bool(external_total) or bool(internal_data_bytes)
         else:
             self.status = "partial"
             self.available = self.apk_available
         reason = self.manifest_reason
         if not self.apk_available and external_total and not reason:
-            reason = "仅外部目录可用；APK 基础大小不可用"
+            reason = "仅外部目录可用；APK 大小不可用"
         self.reason = reason
         top_rows = sorted(
             (row for row in installed_rows if row["external_total_bytes"] > 0),
             key=lambda row: row["external_total_bytes"], reverse=True,
         )[: self.top_apps]
         residue = sorted(residue_rows, key=lambda row: row["external_total_bytes"], reverse=True)
+        internal_readable = any(
+            row["internal_status"] == "collected" for row in self.rows
+        )
+        internal_state = "部分可读（只读 du）" if internal_readable else "不可读（需要 StorageStatsManager 权限或 Root）"
+        split_status = str((self.manifest.get("apk") or {}).get("split_status") or "")
+        split_state = {
+            "collected": "已尝试基础 APK + split APK",
+            "partial": "部分应用已查询 split APK（达到上限）",
+            "disabled": "未查询 split APK",
+            "unavailable": "split APK 不可用",
+        }.get(split_status, "未采集")
         return {
             "schema": 1,
             "status": self.status,
@@ -283,6 +339,15 @@ class AppStorageIndex:
             "known": {
                 "apk_bytes": apk_bytes,
                 "apk_human": human_bytes(apk_bytes),
+                "apk_base_bytes": apk_base_bytes,
+                "apk_base_human": human_bytes(apk_base_bytes),
+                "apk_split_bytes": apk_split_bytes,
+                "apk_split_human": human_bytes(apk_split_bytes),
+                "apk_file_count": apk_file_count,
+                "internal_data_bytes": internal_data_bytes,
+                "internal_data_human": human_bytes(internal_data_bytes),
+                "internal_cache_bytes": internal_cache_bytes,
+                "internal_cache_human": human_bytes(internal_cache_bytes),
                 "external_data_bytes": data_bytes,
                 "external_data_human": human_bytes(data_bytes),
                 "external_media_bytes": media_bytes,
@@ -297,10 +362,14 @@ class AppStorageIndex:
                 "total_human": human_bytes(total),
             },
             "unknown": {
-                "internal_data": "不可读（需要 StorageStatsManager 权限或 Root）",
-                "internal_cache": "不可读（需要 StorageStatsManager 权限或 Root）",
-                "split_apk": "未采集",
+                "internal_data": internal_state,
+                "internal_cache": internal_state,
+                "split_apk": split_state,
             },
+            "capabilities": self.manifest.get("capabilities") or {},
+            "internal_status": str((self.manifest.get("internal") or {}).get("status") or ""),
+            "apk_status": str((self.manifest.get("apk") or {}).get("status") or ""),
+            "split_status": split_status,
             "top_external": [self._public_row(row) for row in top_rows],
             "residue": [self._public_row(row) for row in residue],
             "limitations": list(dict.fromkeys(limitations)),
@@ -316,6 +385,12 @@ class AppStorageIndex:
             "installed": row["installed"],
             "system": row["system"],
             "apk_human": human_bytes(row["apk_bytes"] or 0),
+            "apk_base_human": human_bytes(row["apk_base_bytes"] or 0),
+            "apk_split_human": human_bytes(row["apk_split_bytes"] or 0),
+            "apk_file_count": int(row["apk_file_count"] or 0),
+            "internal_data_human": human_bytes(row["internal_data_bytes"] or 0),
+            "internal_cache_human": human_bytes(row["internal_cache_bytes"] or 0),
+            "internal_status": row["internal_status"],
             "data_human": human_bytes(row["external_data_bytes"]),
             "media_human": human_bytes(row["external_media_bytes"]),
             "obb_human": human_bytes(row["external_obb_bytes"]),
@@ -337,15 +412,26 @@ class AppStorageIndex:
             "installed": (app.get("packages") or {}).get("installed", 0),
             "apk_bytes": known.get("apk_bytes", 0),
             "apk_human": known.get("apk_human", "0 B"),
+            "apk_base_bytes": known.get("apk_base_bytes", 0),
+            "apk_base_human": known.get("apk_base_human", "0 B"),
+            "apk_split_bytes": known.get("apk_split_bytes", 0),
+            "apk_split_human": known.get("apk_split_human", "0 B"),
+            "apk_file_count": known.get("apk_file_count", 0),
+            "internal_data_bytes": known.get("internal_data_bytes", 0),
+            "internal_data_human": known.get("internal_data_human", "0 B"),
+            "internal_cache_bytes": known.get("internal_cache_bytes", 0),
+            "internal_cache_human": known.get("internal_cache_human", "0 B"),
             "external_total_bytes": known.get("external_total_bytes", 0),
             "external_total_human": known.get("external_total_human", "0 B"),
             "external_data_human": known.get("external_data_human", "0 B"),
             "external_media_human": known.get("external_media_human", "0 B"),
             "external_obb_human": known.get("external_obb_human", "0 B"),
             "external_cache_human": known.get("external_cache_human", "0 B"),
-            "internal_data": "不可读",
-            "internal_cache": "不可读",
-            "note": "仅基础 APK + 外部目录；内部 data/cache 与 split APK 未计入，不能与设备已用空间相加。",
+            "internal_data": (app.get("unknown") or {}).get("internal_data", "不可读"),
+            "internal_cache": (app.get("unknown") or {}).get("internal_cache", "不可读"),
+            "split_apk": (app.get("unknown") or {}).get("split_apk", "未采集"),
+            "capabilities": app.get("capabilities") or {},
+            "note": "APK 含基础与已查询的 split APK；内部 data 含 cache/code_cache，外部 data 含外部 cache；分项是子集，不能重复相加。",
         })
         for source in storage.get("sources") or []:
             if source.get("name") == "app_storage":
@@ -374,16 +460,30 @@ class AppStorageIndex:
             state = "包未安装，但外部目录仍有数据" if row["residue"] else (
                 "系统应用" if row["system"] else "用户应用"
             )
+            apk_text = f"基础 APK {human_bytes(row['apk_bytes'] or 0)}"
+            if (row["apk_split_bytes"] or 0) > 0:
+                apk_text = (
+                    f"APK 合计 {human_bytes(row['apk_bytes'] or 0)}"
+                    f"（基础 {human_bytes(row['apk_base_bytes'] or 0)} + "
+                    f"split {human_bytes(row['apk_split_bytes'] or 0)}）"
+                )
+            if row["internal_status"] == "collected":
+                internal_text = (
+                    f"内部 data {human_bytes(row['internal_data_bytes'] or 0)}"
+                    f"（含 cache {human_bytes(row['internal_cache_bytes'] or 0)}）"
+                )
+            else:
+                internal_text = "内部 data/cache 不可读"
             evidence.append({
                 "code": "app_storage",
                 "text": (
                     f"应用级存储：{row['label']} ({package})，{state}；"
-                    f"基础 APK {human_bytes(row['apk_bytes'] or 0)}，"
+                    f"{apk_text}，"
                     f"外部 data {human_bytes(row['external_data_bytes'])}"
                     f"（其中 cache {human_bytes(row['external_cache_bytes'])}）、"
                     f"media {human_bytes(row['external_media_bytes'])}、"
                     f"obb {human_bytes(row['external_obb_bytes'])}；"
-                    "内部 data/cache 不可读。"
+                    f"{internal_text}。"
                 ),
             })
         return evidence

@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.10.0 — 扫描覆盖、应用存储、MediaStore 诊断与移动端报告
+
+### Added
+- 隐藏/特殊缓存识别：新增 `.qcl`、`.cache`、`.ucache`、`.webcache`、`Code Cache`、`GPUCache`、`Service Worker`、`CacheStorage` 等规则；必须同时匹配名称/扩展名与允许根目录，全部标记为 CAUTION/待确认，不进入 SAFE。新增 `special_cache_rule()` 与 `gen_special_caches()`。
+- APK 统计：`pm list packages -f` + 有上限的 `pm path` 识别基础与 split APK；区分 `no_path` / `missing` / `permission_denied` / `stat_failed` / `partial`，记录每个 APK 文件、基础/split 大小与查询上限。
+- 应用内部存储：root/su 且存在 `du` 时，按应用（优先外部数据较大的包，默认最多 60 个）只读统计 `/data/data`、`cache`、`code_cache`；普通 shell 明确标记 unavailable，不使用会写系统缓存的 `dumpsys diskstats`。
+- StorageStatsManager 评估：记录为 shell 不可直接调用、需要应用进程权限；未伪造成已支持。
+- MediaStore 零记录诊断：每个集合独立区分 `ok` / `empty` / `zero_mismatch` / `failed` / `skipped`；0 条且文件扫描同类文件达到阈值（默认 10）时标记异常；记录 command、projection、exit_code、stderr、rows、attempts、elapsed；报告新增集合状态表。
+- 隔离区符号链接防护：execute 记录 `quarantine_real_roots`；purge/restore/verify 校验隔离根真实路径基线、隔离文件父目录真实路径、恢复目标父目录真实路径；操作前再次 realpath，检测检查后替换；无法确认时拒绝。
+- HTML 报告移动端：320/360/390/430 视口优化；目录横向滚动、卡片两列/极窄一列、表格 `width:max-content` + 横向滚动、长路径换行、折叠项与步骤紧凑化。
+- 新增测试：隐藏/特殊缓存、split APK、root/权限降级、MediaStore 零记录、符号链接逃逸、HTML 响应式结构。
+
+### Changed
+- `PackageIndex` 新增 `apk_path_list`，支持一个包多个 APK 路径；scan DB 仍保存基础 APK 路径。
+- `app_storage` 表新增 `apk_base_bytes` / `apk_split_bytes` / `apk_file_count` / `apk_status` / `internal_*` 字段；summary 增加 `capabilities` 与 `internal_status`。
+- 空间速览把可读的内部 data 计入“已知且不重叠”，并明确 APK 含 split、内外部 cache 是子集。
+- 配置新增 `media_store.zero_crosscheck_min_files`、`app_storage.split_apk_max_packages`、`app_storage.internal_max_packages`。
+
+### Notes
+- 全量 281 passed, 2 skipped（283 collected）。
+- 残余风险：realpath 检查缩小了 TOCTOU 窗口，但 adb shell 无法提供 openat/O_NOFOLLOW 级别的原子保证；无法解析真实路径时一律拒绝。
+- 真机未重新验收；本轮 split APK、内部 data、MediaStore 零记录与移动端布局为 mock/单元/Chromium 视口检查。
+
 ## v1.9.5 — restore 路径守卫与哈希校验状态
 
 ### Fixed

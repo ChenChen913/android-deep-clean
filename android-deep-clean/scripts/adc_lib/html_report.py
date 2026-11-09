@@ -25,6 +25,13 @@ _MEDIA_STATUS = {
     "not_collected": "未采集",
 }
 _COLLECTION = {"images": "图片", "video": "视频", "audio": "音频", "downloads": "下载"}
+_MEDIA_COLLECTION_STATUS = {
+    "ok": ("正常", "safe"),
+    "empty": ("0 条（未发现同类文件）", "caution"),
+    "zero_mismatch": ("0 条但与扫描不一致", "danger"),
+    "failed": ("失败", "danger"),
+    "skipped": ("跳过", "caution"),
+}
 
 
 def _e(value: Any) -> str:
@@ -252,6 +259,36 @@ def _media_section(media: dict[str, Any]) -> str:
         + (f"（{_e(media.get('reason'))}）" if media.get("reason") else "")
         + "</p>",
     ]
+    collections = media.get("collections") or []
+    if collections:
+        parts.append('<h3>集合状态</h3><div class="scroll"><table><thead><tr>'
+                     '<th>集合</th><th>状态</th><th class="r">索引行数</th>'
+                     '<th class="r">文件扫描同类</th><th>投影层级</th><th class="r">尝试</th>'
+                     '<th>说明</th></tr></thead><tbody>')
+        for item in collections:
+            collection_status = str(item.get("status") or "")
+            label, css = _MEDIA_COLLECTION_STATUS.get(collection_status, (collection_status or "-", "caution"))
+            parts.append(
+                f'<tr><td>{_e(item.get("label") or item.get("name"))}</td>'
+                f'<td><span class="badge {css}">{_e(label)}</span></td>'
+                f'<td class="r">{_num(item.get("rows"))}</td>'
+                f'<td class="r">{_num(item.get("scan_files"))}</td>'
+                f'<td>{_e(item.get("projection_tier") or "-")}</td>'
+                f'<td class="r">{_num(item.get("attempts"))}</td>'
+                f'<td>{_e(item.get("error") or "-")}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+    collection_cross = media.get("collection_crosscheck") or {}
+    if collection_cross.get("zero_mismatch"):
+        names = "、".join(
+            _COLLECTION.get(str(name), str(name))
+            for name in collection_cross.get("zero_mismatch") or []
+        )
+        parts.append(
+            f'<div class="note warn"><strong>零记录异常</strong>'
+            f"<p>{_e(names)} 的媒体索引返回 0 条，但文件扫描发现同类文件。"
+            "不能认定媒体库为空；请检查权限、Provider 状态或索引是否延迟。</p></div>"
+        )
     if not media.get("available"):
         parts.append('<div class="note">媒体索引不可用不影响文件扫描结果，但本轮无法解释媒体库与文件系统的差异。</div>')
         parts.append("</section>")
@@ -315,7 +352,9 @@ def _app_section(app: dict[str, Any]) -> str:
         parts.append('<div class="grid stats">')
         for label, value in (
             ("应用包", f"{_num(packages.get('total'))}"),
-            ("基础 APK", known.get("apk_human") or "-"),
+            ("基础 APK", known.get("apk_base_human") or known.get("apk_human") or "-"),
+            ("Split APK", known.get("apk_split_human") or "-"),
+            ("内部 data", known.get("internal_data_human") or "-"),
             ("外部 data", known.get("external_data_human") or "-"),
             ("外部 media", known.get("external_media_human") or "-"),
             ("外部 obb", known.get("external_obb_human") or "-"),
@@ -323,12 +362,17 @@ def _app_section(app: dict[str, Any]) -> str:
         ):
             parts.append(f'<div class="card"><div class="k">{_e(label)}</div><div class="v">{_e(value)}</div></div>')
         parts.append("</div>")
+        unknown = app.get("unknown") or {}
+        if unknown.get("split_apk"):
+            parts.append(f'<div class="note">Split APK：{_e(unknown.get("split_apk"))}；共 {_num(known.get("apk_file_count"))} 个 APK 文件。</div>')
+        if unknown.get("internal_data"):
+            parts.append(f'<div class="note">内部 data：{_e(unknown.get("internal_data"))}；内部 cache 是 data 的子集。</div>')
         top = app.get("top_external") or []
         if top:
             parts.append('<h3>外部存储占用较高的应用</h3><div class="scroll"><table><thead><tr>'
                          '<th>应用</th><th>包名</th><th class="r">外部合计</th><th class="r">data</th>'
-                         '<th class="r">media</th><th class="r">obb</th><th class="r">基础 APK</th>'
-                         '</tr></thead><tbody>')
+                         '<th class="r">media</th><th class="r">obb</th><th class="r">APK 合计</th>'
+                         '<th class="r">内部 data</th></tr></thead><tbody>')
             for row in top[:12]:
                 parts.append(
                     f'<tr><td>{_e(row.get("label"))}</td><td><code>{_e(row.get("package"))}</code></td>'
@@ -336,7 +380,8 @@ def _app_section(app: dict[str, Any]) -> str:
                     f'<td class="r">{_e(row.get("data_human"))}</td>'
                     f'<td class="r">{_e(row.get("media_human"))}</td>'
                     f'<td class="r">{_e(row.get("obb_human"))}</td>'
-                    f'<td class="r">{_e(row.get("apk_human"))}</td></tr>'
+                    f'<td class="r">{_e(row.get("apk_human"))}</td>'
+                    f'<td class="r">{_e(row.get("internal_data_human"))}</td></tr>'
                 )
             parts.append("</tbody></table></div>")
         residue = app.get("residue") or []
@@ -876,6 +921,10 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
         parts.append(
             f'<div class="note warn">有 {hash_incomplete} 个隔离文件完整性校验未完成，已按失败处理。</div>'
         )
+    if verification.get("realpath_baseline") == "current":
+        parts.append(
+            '<div class="note">旧 execution.json 未记录隔离区真实路径基线；本次以当前解析结果为准。</div>'
+        )
     if verification.get("note"):
         parts.append(f'<div class="note">{_e(verification.get("note"))}</div>')
     parts.append("</section>")
@@ -983,6 +1032,10 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                 f'<div class="note warn">有 {_num(purge.get("hash_incomplete_files"))} 个隔离文件'
                 "完整性校验未完成，已拒绝操作。</div>"
             )
+        if purge.get("realpath_baseline") == "current":
+            parts.append(
+                '<div class="note">旧 execution.json 未记录隔离区真实路径基线；本次以当前解析结果为准。</div>'
+            )
         if len(purge_runs) > 1:
             parts.append('<h3>purge 执行记录</h3><div class="scroll"><table><thead><tr>'
                          '<th>时间</th><th class="r">删除</th><th class="r">逻辑大小</th>'
@@ -1036,6 +1089,10 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
             parts.append(
                 f'<div class="note warn">有 {_num(restore.get("hash_incomplete_files"))} 个隔离文件'
                 "完整性校验未完成，已拒绝操作。</div>"
+            )
+        if restore.get("realpath_baseline") == "current":
+            parts.append(
+                '<div class="note">旧 execution.json 未记录隔离区真实路径基线；本次以当前解析结果为准。</div>'
             )
         if len(restore_runs) > 1:
             parts.append('<h3>restore 执行记录</h3><div class="scroll"><table><thead><tr>'
@@ -1271,7 +1328,7 @@ transition:transform .18s ease}
 details.cand[open]>summary::before{transform:rotate(90deg)}
 .ctitle{flex:1;font-weight:600;letter-spacing:-.01em;word-break:break-all}
 .csize{color:var(--muted);font-size:13px;white-space:nowrap}
-.cbody{padding:6px 18px 18px;border-top:1px solid var(--line)}
+.cbody{padding:6px 18px 18px;border-top:1px solid var(--line);overflow-x:auto}
 .cbody p{margin:8px 0}
 .cid{color:var(--muted);font-size:12.5px}
 .muted{color:var(--muted);font-size:13px;margin:10px 0 4px}
@@ -1286,13 +1343,55 @@ font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:c
 .foot{color:var(--muted);font-size:12.5px;text-align:center;
 margin-top:40px;padding-top:24px;border-top:1px solid var(--line)}
 @media (max-width:640px){
-.wrap{padding:36px 18px 72px}
-h1{font-size:32px}
-.sub{font-size:15px}
-.block{padding:22px 20px}
-.hero{padding-bottom:24px;margin-bottom:22px}
-.grid.meta{grid-template-columns:repeat(2,minmax(0,1fr))}
-.toc{top:10px}
+.wrap{padding:28px 14px 64px}
+.hero{padding-bottom:20px;margin-bottom:18px}
+h1{font-size:30px;line-height:1.12;margin-bottom:10px}
+.sub{font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+h2{font-size:20px;margin-bottom:10px}
+h3{font-size:14px;margin:20px 0 8px}
+.block{padding:18px 14px;margin:12px 0;border-radius:16px;scroll-margin-top:60px}
+.lead{font-size:14px;margin-bottom:12px;overflow-wrap:anywhere}
+.grid{gap:8px}
+.grid.meta{grid-template-columns:repeat(2,minmax(0,1fr));margin:14px 0 4px}
+.grid.stats{grid-template-columns:repeat(2,minmax(0,1fr));margin:10px 0}
+.card{padding:11px 12px;border-radius:12px;min-width:0}
+.card .k{font-size:10.5px;letter-spacing:.04em}
+.card .v{font-size:14px;line-height:1.35;word-break:break-word;overflow-wrap:anywhere}
+.toc{top:8px;margin:0 -2px 10px;padding:4px;border-radius:14px;flex-wrap:nowrap;
+overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.toc::-webkit-scrollbar{display:none}
+.toc a{flex:0 0 auto;padding:7px 11px;font-size:12.5px;white-space:nowrap}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -2px;padding-bottom:2px;
+box-shadow:inset -10px 0 10px -12px rgba(0,0,0,.18)}
+table{width:max-content;min-width:100%;font-size:13px}
+th,td{padding:9px 8px}
+th{font-size:10.5px}
+td{max-width:260px;word-break:break-word;overflow-wrap:anywhere}
+td.r,th.r{white-space:nowrap}
+code{font-size:11.5px;padding:1px 5px}
+.note{padding:11px 12px;font-size:12.5px;border-radius:12px;margin-top:12px;overflow-wrap:anywhere}
+.badge{font-size:10.5px;padding:2px 7px}
+details.cand{margin:8px 0;border-radius:12px}
+details.cand>summary{padding:11px 12px;gap:8px}
+.ctitle{font-size:14px;line-height:1.35;overflow-wrap:anywhere}
+.csize{font-size:11.5px}
+.cbody{padding:4px 12px 12px}
+ul.paths,ul.ev{padding-left:16px;font-size:12.5px}
+ul.paths li,ul.ev li{overflow-wrap:anywhere}
+.steps li{gap:10px;padding:11px 0}
+.stepnum{flex-basis:22px;height:22px;font-size:11px}
+.steps p{font-size:12.5px;overflow-wrap:anywhere}
+.foot{margin-top:28px;padding-top:18px;font-size:11.5px}
+.bar{height:8px;margin:10px 0}
+.legend{gap:10px;font-size:12px}
+}
+@media (max-width:340px){
+.wrap{padding:22px 10px 56px}
+h1{font-size:26px}
+h2{font-size:18px}
+.block{padding:15px 11px}
+.grid.meta,.grid.stats{grid-template-columns:1fr}
+.card .v{font-size:13.5px}
 }
 @media (prefers-color-scheme:dark){
 :root{--bg:#000;--surface:#000;--surface-2:#1c1c1e;

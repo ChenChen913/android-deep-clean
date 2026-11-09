@@ -30,6 +30,8 @@ from .rules import (
     CATEGORY_META,
     LOG_EXTS,
     MEDIA_EXTS,
+    SPECIAL_CACHE_DIR_NAMES,
+    SPECIAL_CACHE_EXTENSIONS,
     TEMP_EXTS,
     THUMB_DIR_NAMES,
     TRASH_DIR_NAMES,
@@ -42,6 +44,7 @@ from .rules import (
     is_chat_path,
     is_ota_file,
     is_screenshot,
+    special_cache_rule,
 )
 from .state import State
 from .transport import Transport
@@ -593,6 +596,94 @@ class Analyzer:
                          "如果目录内包含离线下载/离线地图等大文件，清理后需要重新下载。"],
                 confidence=0.9 if category == "app_cache" else 0.75,
                 keep_suggestion="如该应用正在下载离线内容，可在下载完成后再清理。",
+                app_pkg=package, app_kind=kind,
+            )
+
+    def gen_special_caches(self) -> None:
+        """Recognise non-standard hidden cache names without treating them as SAFE.
+
+        Names/extensions are matched only inside app external data or known
+        chat roots; every candidate is CAUTION and requires review.
+        """
+        dir_names = sorted(SPECIAL_CACHE_DIR_NAMES)
+        placeholders = ",".join("?" for _ in dir_names)
+        rows = self._rows(
+            f"SELECT path,parent,name,kind,size,mtime,inode,dev FROM scan.entries "
+            f"WHERE kind='dir' AND lower(name) IN ({placeholders}) "
+            f"ORDER BY length(path) ASC LIMIT 400",
+            tuple(dir_names),
+        )
+        for row in rows:
+            if self._limit():
+                return
+            path = row["path"]
+            rule = special_cache_rule(path, is_dir=True)
+            if not rule:
+                continue
+            guard = guard_path(path, "app_cache", kind="dir", packages=self.packages, config=self.config, platform=self.platform)
+            if not guard.get("allowed"):
+                continue
+            inner = self._entries_under(path)
+            files = [self._file_from_row(row, role="target_dir")] + [
+                self._file_from_row(item) for item in inner if item["path"] != path
+            ]
+            total = sum(item.size for item in files if item.kind == "file")
+            if total <= 0:
+                continue
+            package, label, kind = self._app_meta(path)
+            category = "chat_cache" if (is_chat_path(path) or kind == "chat") else (
+                "browser_cache" if kind == "browser" else "app_cache"
+            )
+            self._add_candidate(
+                category=category, action="clean_dir_children", primary_path=path, files=files,
+                risk="CAUTION", title=f"待确认缓存：{display_path(path)}",
+                evidence=self._base_evidence(path, files) + [
+                    {"code": "special_cache", "text": f"规则 {rule['id']}：{rule['reason']}"},
+                    {"code": "special_cache_rule", "text": "目录名匹配特殊缓存规则；未确认前不纳入 SAFE"},
+                ],
+                reasons=[
+                    rule["reason"],
+                    "该目录名不是标准 cache/code_cache；需要确认是否可重新生成。",
+                ],
+                confidence=0.55,
+                keep_suggestion="如果不确定该目录用途，请保留并在应用内清理。",
+                app_pkg=package, app_kind=kind,
+            )
+
+        extensions = sorted(SPECIAL_CACHE_EXTENSIONS)
+        placeholders = ",".join("?" for _ in extensions)
+        rows = self._rows(
+            f"SELECT path,parent,name,size,mtime,inode,dev,ext FROM scan.entries e "
+            f"WHERE kind='file' AND lower(ext) IN ({placeholders}) "
+            f"AND NOT EXISTS (SELECT 1 FROM claimed c WHERE c.path=e.path) LIMIT 2000",
+            tuple(extensions),
+        )
+        groups: dict[str, list[CandidateFile]] = {}
+        for row in rows:
+            rule = special_cache_rule(row["path"], is_dir=False)
+            if not rule:
+                continue
+            guard = guard_path(row["path"], "app_cache", kind="file", packages=self.packages, config=self.config, platform=self.platform)
+            if not guard.get("allowed"):
+                continue
+            groups.setdefault(row["parent"], []).append(self._file_from_row(row))
+        for parent, files in sorted(groups.items()):
+            if self._limit():
+                return
+            package, label, kind = self._app_meta(parent)
+            category = "chat_cache" if (is_chat_path(parent) or kind == "chat") else (
+                "browser_cache" if kind == "browser" else "app_cache"
+            )
+            self._group_files_candidate(
+                category=category, parent=parent, files=files, risk="CAUTION",
+                title=f"待确认缓存文件：{display_path(parent)}",
+                evidence=self._base_evidence(parent, files) + [
+                    {"code": "special_cache", "text": "扩展名匹配特殊缓存规则；仅在应用数据/腾讯目录内识别"},
+                    {"code": "special_cache_rule", "text": "未确认用途前不纳入 SAFE"},
+                ],
+                reasons=["扩展名呈缓存特征，但来源需确认；清理后可能需要应用重新生成。"],
+                confidence=0.5,
+                keep_suggestion="如果不确定该文件用途，请保留。",
                 app_pkg=package, app_kind=kind,
             )
 
@@ -1203,7 +1294,8 @@ class Analyzer:
             )
         else:
             generators = (
-                self.gen_residue, self.gen_thumbnails, self.gen_caches, self.gen_temp_logs,
+                self.gen_residue, self.gen_thumbnails, self.gen_caches, self.gen_special_caches,
+                self.gen_temp_logs,
                 self.gen_trash, self.gen_duplicates, self.gen_apks, self.gen_archives,
                 self.gen_screenshots, self.gen_ota, self.gen_downloads, self.gen_large_old,
                 self.gen_media_old, self.gen_empty_dirs, self.gen_protected,

@@ -4,12 +4,14 @@ Every number below is measured by a different method:
 
 - device used: filesystem block usage of ``/data`` (includes everything);
 - file scan: unique logical bytes of the scanned shared storage;
-- base APK: ``stat`` of installed base APKs under ``/data/app`` / system;
+- APK: ``stat`` of base APKs plus split APKs when the bounded query succeeds;
+- app internal: read-only ``du`` of ``/data/data`` when root/su is available;
 - app external: ``Android/data|media|obb``, which is **inside** the file scan;
 - media index: MediaStore ``_size``, mostly **inside** the file scan.
 
 The module never adds overlapping numbers.  It reports the disjoint part
-(APK + file scan) and the residual gap with explicit caveats.
+(APK + readable internal data + file scan) and the residual gap with explicit
+caveats.
 """
 
 from __future__ import annotations
@@ -59,10 +61,13 @@ def build_space_story(
     file_scan = _int(coverage.get("unique_bytes") or stats.get("bytes"))
     app_known = (app_storage.get("known") or {})
     apk_bytes = _int(app_known.get("apk_bytes"))
+    internal_bytes = _int(app_known.get("internal_data_bytes"))
+    internal_status = str(app_storage.get("internal_status") or "")
+    internal_available = internal_status in {"collected", "partial"}
     app_external = _int(app_known.get("external_total_bytes"))
     media_bytes = _int((media_index.get("index") or {}).get("bytes"))
 
-    disjoint = apk_bytes + file_scan
+    disjoint = apk_bytes + (internal_bytes if internal_available else 0) + file_scan
     residual = device_used - disjoint if device_used else None
     scan_ratio = round(file_scan / device_used, 4) if device_used else None
 
@@ -87,12 +92,21 @@ def build_space_story(
         }),
         _with_human({
             "key": "app_apk",
-            "label": "应用基础 APK",
+            "label": "应用 APK（基础 + split）",
             "bytes": apk_bytes,
-            "measure": "stat 基础 APK",
-            "scope": "已安装应用的基础 APK（split 未计入）",
+            "measure": "stat 基础 APK + 已查询的 split APK",
+            "scope": "已安装应用；split 查询受上限与权限限制",
             "relation": "disjoint-with-file-scan",
             "note": "位于 /data/app 与系统分区，不在 /sdcard 扫描范围内",
+        }),
+        _with_human({
+            "key": "app_internal",
+            "label": "应用内部 data",
+            "bytes": internal_bytes if internal_available else 0,
+            "measure": "只读 du（/data/data，含 cache/code_cache）",
+            "scope": "root/su 下按应用抽样统计，不是全量",
+            "relation": "disjoint-with-file-scan",
+            "note": "不在 /sdcard 扫描范围内；普通 shell 不可读",
         }),
         _with_human({
             "key": "app_external",
@@ -114,8 +128,10 @@ def build_space_story(
         }),
     ]
     if not app_storage.get("available"):
-        items = [item for item in items if item["key"] != "app_apk"]
+        items = [item for item in items if item["key"] not in {"app_apk", "app_internal"}]
         items[0]["note"] += "；应用 APK 本轮不可用"
+    elif not internal_available:
+        items = [item for item in items if item["key"] != "app_internal"]
     if not media_index.get("available"):
         items = [item for item in items if item["key"] != "media_index"]
 
@@ -126,12 +142,15 @@ def build_space_story(
     caveats: list[str] = [
         "设备已用空间是块占用；文件扫描是逻辑大小，两者口径不同。",
         "应用外部目录与媒体索引都包含在文件扫描内，不能重复相加。",
-        "应用内部 data/cache、系统分区、未扫描区域和文件系统开销目前无法解释，属于下方“未解释差额”。",
+        "应用内部 data 只有在 root/su 下才能用只读 du 统计；普通 shell 读不到，未计入。",
+        "系统分区、未扫描区域和文件系统开销目前无法解释，属于下方“未解释差额”。",
     ]
     if coverage.get("status") != "good":
         caveats.append("本轮扫描覆盖率不是完整状态，未解释差额会更大。")
     if not app_storage.get("available"):
-        caveats.append("应用基础 APK 本轮不可用，未计入已知部分。")
+        caveats.append("应用 APK 本轮不可用，未计入已知部分。")
+    elif not internal_available:
+        caveats.append("应用内部 data 本轮不可读，未计入已知部分。")
     if media_index.get("status") in {None, "not_collected", "unavailable"}:
         caveats.append("媒体索引本轮不可用，无法交叉核对媒体大小。")
 
@@ -168,7 +187,7 @@ def _headline(
     ]
     if residual is not None:
         if residual >= 0:
-            parts.append(f"，加上基础 APK 后仍有 {human_bytes(residual)} 未解释")
+            parts.append(f"，加上 APK 与可读的内部 data 后仍有 {human_bytes(residual)} 未解释")
         else:
             parts.append(f"，已知部分比设备已用多 {human_bytes(abs(residual))}")
     parts.append("。")

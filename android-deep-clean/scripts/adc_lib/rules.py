@@ -223,6 +223,44 @@ CHAT_MEDIA_COMPONENTS = {
 }
 
 CACHE_DIR_NAMES = {"cache", "code_cache", "tmp", "temp", ".tmp", ".temp"}
+SPECIAL_CACHE_DIR_NAMES = {
+    ".cache", ".caches", ".qcl", ".ucache", ".webcache",
+    ".image_cache", ".video_cache", ".http_cache", ".disk_cache",
+    ".glide_cache", ".okhttp_cache", ".download_cache", ".offline_cache",
+    "code cache", "gpucache", "shadercache", "grshadercache",
+    "service worker", "cachestorage",
+}
+SPECIAL_CACHE_EXTENSIONS = {".qcl", ".cache", ".ucache", ".webcache"}
+SPECIAL_CACHE_RULES = (
+    {
+        "id": "tencent-qcl",
+        "names": {".qcl"},
+        "extensions": {".qcl"},
+        "roots": (
+            "/sdcard/Android/data/com.tencent.mobileqq",
+            "/sdcard/Android/data/com.tencent.tim",
+            "/sdcard/Android/data/com.tencent.mtt",
+        ),
+        "risk": "CAUTION",
+        "reason": "腾讯/QQ 应用的 .qcl 特殊缓存；仅限应用外部数据目录",
+    },
+    {
+        "id": "generic-hidden-cache",
+        "names": SPECIAL_CACHE_DIR_NAMES,
+        "extensions": SPECIAL_CACHE_EXTENSIONS,
+        "roots": ("/sdcard/Android/data/",),
+        "risk": "CAUTION",
+        "reason": "隐藏缓存目录/扩展名；应用来源未确认，需逐项复核",
+    },
+    {
+        "id": "chat-hidden-cache",
+        "names": {".cache", ".caches", ".ucache", ".webcache"},
+        "extensions": set(),
+        "roots": CHAT_ROOTS,
+        "risk": "CAUTION",
+        "reason": "聊天应用隐藏缓存目录；不包含聊天记录与接收文件",
+    },
+)
 THUMB_DIR_NAMES = {".thumbnails", "thumbnails", "thumbs", ".thumb", "thumb"}
 TRASH_DIR_NAMES = {".trash", "trash", ".recycle", "recycle", ".recyclebin", "recycle_bin", "$recycle.bin"}
 
@@ -352,9 +390,34 @@ def is_cache_path(path: str) -> bool:
         return False
     if any(part in CACHE_DIR_NAMES or part in THUMB_DIR_NAMES for part in parts):
         return True
+    if any(part in SPECIAL_CACHE_DIR_NAMES for part in parts):
+        # Special cache names are only trusted inside app external data or
+        # known chat roots; a hidden ".cache" under DCIM is not a cache.
+        if is_under(normalized, "/sdcard/Android/data") or is_chat_path(normalized):
+            return True
     if "/Android/data/" in normalized and any(part in CACHE_DIR_NAMES for part in parts):
         return True
     return False
+
+
+def special_cache_rule(path: str, *, is_dir: bool = False) -> dict[str, Any] | None:
+    """Return the matching special-cache rule, or None.
+
+    Matching requires both a name/extension and an allowed root.  A hidden
+    name alone is never enough, and .qcl is only trusted under the listed
+    Tencent app-data roots.
+    """
+    normalized = normalize_device_path(path)
+    name = posixpath.basename(normalized).lower()
+    extension = ext_of(name)
+    for rule in SPECIAL_CACHE_RULES:
+        if not any(is_under(normalized, root) for root in rule["roots"]):
+            continue
+        if is_dir and name in rule["names"]:
+            return dict(rule)
+        if not is_dir and (name in rule["names"] or extension in rule["extensions"]):
+            return dict(rule)
+    return None
 
 
 def is_thumb_path(path: str) -> bool:
@@ -412,11 +475,16 @@ def _guard_android_tree(path: str, category: str, packages: PackageIndex | None)
     lower_sub = [p.lower() for p in sub]
 
     if kind == "data":
-        cache_ok = bool(lower_sub) and lower_sub[0] in CACHE_DIR_NAMES
+        cache_ok = bool(lower_sub) and (
+            lower_sub[0] in CACHE_DIR_NAMES or lower_sub[0] in SPECIAL_CACHE_DIR_NAMES
+        )
         if category == "residue" and installed is False:
             return True, "", "CAUTION"
         if category in {"app_cache", "browser_cache", "chat_cache", "thumbnails", "temp_logs", "trash"} and cache_ok:
-            return True, "", "SAFE" if category != "chat_cache" else "CAUTION"
+            floor = "SAFE" if category != "chat_cache" else "CAUTION"
+            if lower_sub[0] in SPECIAL_CACHE_DIR_NAMES:
+                floor = "CAUTION"
+            return True, "", floor
         if installed is False and cache_ok:
             return True, "", "SAFE"
         return False, "使用中应用的非缓存外部数据受保护（仅允许 cache/code_cache/tmp）", "DANGEROUS"

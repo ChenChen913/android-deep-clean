@@ -459,6 +459,7 @@ class MediaIndex:
                 ],
             },
             "crosscheck": self.crosscheck or self._empty_crosscheck(),
+            "collection_crosscheck": self.manifest.get("crosscheck") or {},
             "collections": self.collections,
             "limitations": list(dict.fromkeys(limitations)),
             "manifest_path": str(self.aux_dir / "sources.json"),

@@ -21,6 +21,11 @@
 - 验证结果（源文件消失/隔离文件存在/大小一致）；
 - 存储可用空间变化（注意系统噪声）；
 - 剩余问题、建议复查。
+- 媒体集合状态：ok / empty / zero_mismatch / failed / skipped；0 条但文件扫描有同类文件时标记异常。
+- 应用存储：基础/split APK、内部 data（root/su 时）、外部 data/media/obb，以及 permission_denied / partial / unavailable 状态。
+- 隔离区：realpath 基线、父目录校验、哈希校验状态（通过 / 仅大小 / 未完成）。
+
+HTML 报告为单文件离线页面，640px / 340px 断点；表格在 `.scroll` 内横向滚动，目录为单行横向滚动。已在 Chromium 320/360/390/430/1280 视口检查，无页面级横向溢出；真实 iOS Safari / 微信内置浏览器仍需单独验收。
 
 ## 3. 状态文件结构
 

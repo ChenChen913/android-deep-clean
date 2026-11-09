@@ -14,6 +14,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import posixpath
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -273,6 +274,14 @@ class Executor:
         free_after = self._safe_df()
         purge_token = random_token("PURGE")
         finished_at = now_iso()
+        quarantine_real_roots: dict[str, str] = {}
+        for root in sorted(self.quarantine_roots):
+            try:
+                real = self.transport.realpath(root)
+            except Exception:  # noqa: BLE001 - a missing baseline is reported as degraded later
+                real = None
+            if real:
+                quarantine_real_roots[root] = real
         discovered_bytes = int((plan.get("summary") or {}).get("bytes") or 0)
         selected_bytes = int((selection.get("summary") or {}).get("bytes") or 0)
         execution = {
@@ -293,6 +302,7 @@ class Executor:
             "abort_reason": abort_reason,
             "quarantine_root": str(quarantine_root) if quarantine_root else "",
             "quarantine_roots": sorted(self.quarantine_roots),
+            "quarantine_real_roots": quarantine_real_roots,
             "quarantine_files": quarantine_files,
             "quarantine_bytes": quarantine_bytes,
             "backup_dir": str(self.backup_dir) if self.backup_dir else "",
@@ -745,6 +755,114 @@ def _quarantine_roots(execution: dict[str, Any]) -> list[str]:
     return roots
 
 
+def _quarantine_real_roots(
+    execution: dict[str, Any],
+    transport: Transport,
+) -> tuple[list[str], str]:
+    """Resolve quarantine roots and compare them with the execute-time baseline.
+
+    ``execution.json`` records the real path of each quarantine root at execute
+    time.  If a root or one of its parents was replaced by a symlink later, the
+    current realpath differs and every purge/restore/verify must stop.  Older
+    executions without the baseline fall back to the current realpath and are
+    marked ``current`` so reports can disclose the weaker guarantee.
+    """
+    roots = _quarantine_roots(execution)
+    recorded = execution.get("quarantine_real_roots")
+    recorded = recorded if isinstance(recorded, dict) else {}
+    real_roots: list[str] = []
+    for root in roots:
+        current = transport.realpath(root)
+        if not current:
+            raise SafetyError(f"无法确认隔离区真实路径，拒绝操作：{root}")
+        expected = str(recorded.get(root) or "")
+        if expected and current != expected:
+            raise SafetyError(
+                f"隔离区真实路径已变化（可能被符号链接替换），拒绝操作：{root} -> {current}"
+            )
+        real_roots.append(current)
+    return real_roots, ("recorded" if recorded else "current")
+
+
+def _resolve_device_realpath(transport: Transport, path: str) -> str | None:
+    """Resolve symlinks in the existing prefix of a possibly missing path."""
+    current = normalize_device_path(path)
+    missing: list[str] = []
+    while current and current != "/":
+        real = transport.realpath(current)
+        if real:
+            if missing:
+                return posixpath.normpath(posixpath.join(real, *reversed(missing)))
+            return real
+        missing.append(posixpath.basename(current))
+        parent = posixpath.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
+def _quarantine_parent_reason(
+    transport: Transport,
+    qpath: str,
+    real_roots: list[str],
+    cache: dict[str, str | None],
+) -> str:
+    """Reject a quarantine file whose parent directory resolves outside the roots."""
+    parent = posixpath.dirname(qpath)
+    if parent not in cache:
+        cache[parent] = transport.realpath(parent)
+    real_parent = cache[parent]
+    if not real_parent:
+        return "无法确认隔离文件父目录真实路径，拒绝操作"
+    if not any(is_under(real_parent, root) for root in real_roots):
+        return f"隔离文件父目录真实路径不在隔离区内（{real_parent}），拒绝操作"
+    return ""
+
+
+def _same_display_path(left: str, right: str) -> bool:
+    try:
+        return display_path(left) == display_path(right)
+    except Exception:  # noqa: BLE001 - unparsable paths must not compare equal
+        return False
+
+
+def _restore_target_reason(
+    transport: Transport,
+    source: str,
+    *,
+    category: str,
+    packages: Any,
+    config: dict[str, Any],
+    platform: str,
+) -> tuple[str, str]:
+    """Return (resolved_source, reason) for a restore target.
+
+    A symlinked parent can make a string-valid path point outside the intended
+    tree.  Resolve the existing prefix, require it to be display-equivalent to
+    the recorded parent (allowing only the /sdcard mount alias), then re-run
+    the category guard on the resolved path.
+    """
+    parent = posixpath.dirname(source)
+    real_parent = _resolve_device_realpath(transport, parent)
+    if not real_parent:
+        return "", "无法确认恢复目标父目录真实路径，拒绝恢复"
+    if not _same_display_path(real_parent, parent):
+        return "", f"恢复目标父目录被重定向（{real_parent}），拒绝恢复"
+    real_source = posixpath.normpath(posixpath.join(real_parent, posixpath.basename(source)))
+    guard = guard_path(
+        real_source,
+        category,
+        kind="file",
+        packages=packages,
+        config=config,
+        platform=platform,
+    )
+    if not guard.get("allowed"):
+        return "", f"恢复目标真实路径不符合安全路径规则：{guard.get('reason') or '被拒绝'}"
+    return real_source, ""
+
+
 def _load_restore_packages(state: State) -> Any:
     """Load the scan package index for restore path guards.
 
@@ -912,6 +1030,10 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
     roots = _quarantine_roots(execution) if any(
         entry.get("event") == "quarantined" for entry in entries
     ) else []
+    real_roots, realpath_baseline = (
+        _quarantine_real_roots(execution, transport) if roots else ([], "current")
+    )
+    parent_realpaths: dict[str, str | None] = {}
     hash_targets: list[str] = []
     for entry in entries:
         if entry.get("event") != "quarantined":
@@ -948,6 +1070,10 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
             qpath = entry.get("quarantine_path", "")
             if qpath and roots and not any(is_under(qpath, root) for root in roots):
                 failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内"})
+                continue
+            parent_reason = _quarantine_parent_reason(transport, qpath, real_roots, parent_realpaths)
+            if parent_reason:
+                failures.append({"path": qpath, "reason": parent_reason})
                 continue
             qstat = transport.stat(qpath) if qpath else None
             if not qstat or qstat.kind != "file":
@@ -1010,6 +1136,7 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
             "free_delta": free_delta,
         },
         "failures": failures,
+        "realpath_baseline": realpath_baseline,
         "free_before": execution.get("free_before"),
         "free_after_execution": execution.get("free_after"),
         "free_now": free_now,
@@ -1052,6 +1179,8 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 continue
     all_roots = _quarantine_roots(execution)
+    real_roots, realpath_baseline = _quarantine_real_roots(execution, transport)
+    parent_realpaths: dict[str, str | None] = {}
     hash_targets: list[str] = []
     for entry in entries:
         if entry.get("event") != "quarantined":
@@ -1100,6 +1229,11 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内，拒绝"})
             updated.append(entry)
             continue
+        parent_reason = _quarantine_parent_reason(transport, qpath, real_roots, parent_realpaths)
+        if parent_reason:
+            failures.append({"path": qpath, "reason": parent_reason})
+            updated.append(entry)
+            continue
         current = transport.stat(qpath)
         if current is None:
             entry["purge_status"] = "missing"
@@ -1127,6 +1261,14 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             hash_verified += 1
         elif status == "size_only":
             hash_unavailable += 1
+        final_parent = transport.realpath(posixpath.dirname(qpath))
+        if not final_parent or not any(is_under(final_parent, root) for root in real_roots):
+            failures.append({
+                "path": qpath,
+                "reason": "隔离文件父目录真实路径在检查后发生变化，拒绝删除",
+            })
+            updated.append(entry)
+            continue
         try:
             transport.delete_file(qpath)
             if transport.stat(qpath) is not None:
@@ -1165,6 +1307,7 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         "hash_verified_files": hash_verified,
         "hash_unavailable_files": hash_unavailable,
         "hash_incomplete_files": hash_incomplete,
+        "realpath_baseline": realpath_baseline,
     }
     runs = _previous_runs(
         execution.get("purge"),
@@ -1190,6 +1333,7 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         "hash_verified_files": hash_verified_total,
         "hash_unavailable_files": hash_unavailable_total,
         "hash_incomplete_files": hash_incomplete_total,
+        "realpath_baseline": realpath_baseline,
         "last_run": run,
         "runs": runs,
     }
@@ -1211,6 +1355,8 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
             f"- 内容校验：{hash_verified} 个通过；{hash_unavailable} 个仅校验大小；"
             f"{hash_incomplete} 个未完成"
         )
+    if realpath_baseline == "current":
+        lines.append("- 注意：旧 execution.json 未记录隔离区真实路径基线，本次以当前解析结果为准。")
     lines.append("")
     if missing:
         lines.append(f"- 本次有 {missing} 个隔离文件在执行前已不存在，标记为 missing。")
@@ -1252,6 +1398,8 @@ def restore(
     if not journal_path or not Path(journal_path).exists():
         raise ValidationError("journal.jsonl 缺失，无法恢复")
     roots = _quarantine_roots(execution)
+    real_roots, realpath_baseline = _quarantine_real_roots(execution, transport)
+    parent_realpaths: dict[str, str | None] = {}
     item_categories = {
         str(item.get("id")): str(item.get("category") or "")
         for item in execution.get("items") or []
@@ -1325,6 +1473,11 @@ def restore(
                 failures.append({"path": qpath, "reason": "隔离路径不在本次隔离区内，拒绝恢复"})
                 entries.append(entry)
                 continue
+            parent_reason = _quarantine_parent_reason(transport, qpath, real_roots, parent_realpaths)
+            if parent_reason:
+                failures.append({"path": qpath, "reason": parent_reason})
+                entries.append(entry)
+                continue
             category = item_categories.get(str(item_id), "")
             if not category:
                 failures.append({"path": source, "reason": "无法从执行记录确定候选类别，拒绝恢复"})
@@ -1350,13 +1503,32 @@ def restore(
                 })
                 entries.append(entry)
                 continue
+            real_source, target_reason = _restore_target_reason(
+                transport,
+                source,
+                category=category,
+                packages=packages,
+                config=config,
+                platform=platform,
+            )
+            if target_reason:
+                failures.append({"path": source, "reason": target_reason})
+                entries.append(entry)
+                continue
             if transport.stat(source) is not None:
                 failures.append({"path": source, "reason": "原路径已存在，拒绝覆盖"})
                 entries.append(entry)
                 continue
             qstat = transport.stat(qpath)
-            if not qstat or qstat.kind != "file":
+            if not qstat:
                 failures.append({"path": qpath, "reason": "隔离文件缺失"})
+                entries.append(entry)
+                continue
+            if qstat.kind != "file":
+                failures.append({
+                    "path": qpath,
+                    "reason": f"隔离文件不是普通文件（{qstat.kind}），拒绝恢复",
+                })
                 entries.append(entry)
                 continue
             status, reason = _quarantine_integrity(
@@ -1376,6 +1548,22 @@ def restore(
                 hash_verified += 1
             elif status == "size_only":
                 hash_unavailable += 1
+            final_parent = transport.realpath(posixpath.dirname(qpath))
+            if not final_parent or not any(is_under(final_parent, root) for root in real_roots):
+                failures.append({
+                    "path": qpath,
+                    "reason": "隔离文件父目录真实路径在检查后发生变化，拒绝恢复",
+                })
+                entries.append(entry)
+                continue
+            final_source = _resolve_device_realpath(transport, source)
+            if not final_source or final_source != real_source:
+                failures.append({
+                    "path": source,
+                    "reason": "恢复目标真实路径在检查后发生变化，拒绝恢复",
+                })
+                entries.append(entry)
+                continue
             try:
                 transport.mkdirs(os.path.dirname(source).replace("\\", "/"))
                 transport.move(qpath, source)
@@ -1403,6 +1591,7 @@ def restore(
         "hash_verified_files": hash_verified,
         "hash_unavailable_files": hash_unavailable,
         "hash_incomplete_files": hash_incomplete,
+        "realpath_baseline": realpath_baseline,
     }
     runs = _previous_runs(
         execution.get("restore"),
@@ -1425,6 +1614,7 @@ def restore(
         "hash_verified_files": hash_verified_total,
         "hash_unavailable_files": hash_unavailable_total,
         "hash_incomplete_files": hash_incomplete_total,
+        "realpath_baseline": realpath_baseline,
         "last_run": run,
         "runs": runs,
     }
@@ -1444,6 +1634,8 @@ def restore(
             f"- 内容校验：{hash_verified} 个通过；{hash_unavailable} 个仅校验大小；"
             f"{hash_incomplete} 个未完成"
         )
+    if realpath_baseline == "current":
+        lines.append("- 注意：旧 execution.json 未记录隔离区真实路径基线，本次以当前解析结果为准。")
     lines.append("")
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")

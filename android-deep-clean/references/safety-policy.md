@@ -70,6 +70,8 @@
 - journal.jsonl 逐条记录 source/quarantine path/size/item/status；execution.json 汇总。
 - restore 按 journal 恢复；原路径已存在则拒绝覆盖并报告冲突。
 - purge 只删除 journal 中 status=quarantined 且路径在隔离根内的普通文件；不递归。
+- execution.json 记录 quarantine_real_roots；purge/restore/verify 校验隔离根 realpath 未变化、隔离文件父目录 realpath 仍在根内；无法解析时拒绝。
+- restore 目标父目录 realpath 必须与记录路径 display-equivalent；操作前再次 realpath，缩小 TOCTOU 窗口。adb shell 无 openat/O_NOFOLLOW 级原子保证，残余窗口必须在限制中说明。
 - 隔离期间空间不会释放；向用户说明“已隔离 N MB，实际释放 0，purge 后释放”。
 
 ## 6. 失败处理

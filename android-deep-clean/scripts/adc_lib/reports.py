@@ -74,6 +74,13 @@ _MEDIA_STATUS_LABELS = {
     "not_collected": "未采集",
 }
 _COLLECTION_LABELS = {"images": "图片", "video": "视频", "audio": "音频", "downloads": "下载"}
+_COLLECTION_STATUS_LABELS = {
+    "ok": "正常",
+    "empty": "0 条（未发现同类文件）",
+    "zero_mismatch": "0 条但与扫描不一致",
+    "failed": "失败",
+    "skipped": "跳过",
+}
 
 
 def _media_lines(media: dict[str, Any]) -> list[str]:
@@ -127,6 +134,34 @@ def _media_lines(media: dict[str, Any]) -> list[str]:
         f"| 回收站 / pending | {index.get('trashed', 0)} / {index.get('pending', 0)} | 仅提示索引状态，不改变文件风险 |",
         "",
     ]
+    collections = media.get("collections") or []
+    if collections:
+        lines += [
+            "### 媒体集合状态", "",
+            "| 集合 | 状态 | 索引行数 | 文件扫描同类 | 投影层级 | 尝试 | 说明 |",
+            "|---|---|---:|---:|---|---:|---|",
+        ]
+        for item in collections:
+            collection_status = str(item.get("status") or "")
+            lines.append(
+                f"| {md_escape(str(item.get('label') or item.get('name') or ''))} | "
+                f"{_COLLECTION_STATUS_LABELS.get(collection_status, collection_status)} | "
+                f"{int(item.get('rows') or 0)} | {int(item.get('scan_files') or 0)} | "
+                f"{md_escape(str(item.get('projection_tier') or '-'))} | "
+                f"{int(item.get('attempts') or 0)} | "
+                f"{md_escape(str(item.get('error') or ''))} |"
+            )
+        lines.append("")
+    collection_cross = media.get("collection_crosscheck") or {}
+    if collection_cross.get("zero_mismatch"):
+        names = "、".join(
+            _COLLECTION_LABELS.get(str(name), str(name))
+            for name in collection_cross.get("zero_mismatch") or []
+        )
+        lines += [
+            f"- 零记录异常：{md_escape(names)}；文件扫描发现同类文件，不能认定媒体库为空。",
+            "",
+        ]
 
     def sample_table(title: str, items: list[dict[str, Any]]) -> None:
         if not items:
@@ -191,7 +226,7 @@ def _space_story_lines(story: dict[str, Any]) -> list[str]:
     unexplained = story.get("unexplained_human")
     if known:
         lines.append(
-            f"| **已知且不重叠合计** | **{known}** | 文件扫描 + 基础 APK | 可与设备已用空间比较 |"
+            f"| **已知且不重叠合计** | **{known}** | 文件扫描 + APK + 可读的内部 data | 可与设备已用空间比较 |"
         )
     if unexplained:
         lines.append(
@@ -206,7 +241,8 @@ def _space_story_lines(story: dict[str, Any]) -> list[str]:
         "- 应用外部目录：`Android/data|media|obb`，已经包含在文件扫描里。",
         "- 媒体索引：系统媒体库条目，绝大多数也包含在文件扫描里。",
         "- 基础 APK：位于 `/data/app` 与系统分区，不在 `/sdcard` 扫描范围内。",
-        "- 应用内部 data/cache：普通 ADB shell 读不到，目前无法纳入任何一边。",
+        "- APK 已尝试包含 split APK；查询上限与权限限制会如实标记。",
+        "- 应用内部 data/cache：普通 ADB shell 读不到；root/su 下由只读 du 抽样统计，计入不重叠部分。",
         "",
     ]
     return lines
@@ -221,7 +257,7 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
     lines = [
         "## 应用级存储（部分口径）",
         "",
-        "> 仅统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 未计入，不能与设备已用空间相加。",
+        "> APK 含基础与已查询的 split；内部 data 仅在 root/su 下用只读 du 统计；外部目录已包含在文件扫描里。分项是子集，不能重复相加，也不能与设备已用空间相加。",
         "",
         f"- 状态：{_MEDIA_STATUS_LABELS.get(status, status)}",
     ]
@@ -233,17 +269,21 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
             lines.append(f"- {md_escape(str(item))}")
         lines.append("")
         return lines
+    unknown = app.get("unknown") or {}
     lines += [
         "",
         "| 指标 | 数值 | 口径 |",
         "|---|---:|---|",
         f"| 应用包 | {packages.get('total', 0)} 个 | 已安装 {packages.get('installed', 0)}，系统 {packages.get('system', 0)} |",
-        f"| 基础 APK | {known.get('apk_human') or human_bytes(int(known.get('apk_bytes') or 0))} | 仅基础 APK，split 未计入 |",
+        f"| 基础 APK | {known.get('apk_base_human') or human_bytes(int(known.get('apk_base_bytes') or 0))} | 基础安装包 |",
+        f"| Split APK | {known.get('apk_split_human') or human_bytes(int(known.get('apk_split_bytes') or 0))} | "
+        f"共 {known.get('apk_file_count', 0)} 个 APK 文件；{md_escape(str(unknown.get('split_apk') or '未采集'))} |",
+        f"| 内部 data / cache | {known.get('internal_data_human') or human_bytes(int(known.get('internal_data_bytes') or 0))} | "
+        f"含内部 cache {known.get('internal_cache_human') or '0 B'}；{md_escape(str(unknown.get('internal_data') or '不可读'))} |",
         f"| 外部 data | {known.get('external_data_human') or human_bytes(int(known.get('external_data_bytes') or 0))} | 含 cache {known.get('external_cache_human') or '0 B'} |",
         f"| 外部 media | {known.get('external_media_human') or human_bytes(int(known.get('external_media_bytes') or 0))} | `/sdcard/Android/media` |",
         f"| 外部 obb | {known.get('external_obb_human') or human_bytes(int(known.get('external_obb_bytes') or 0))} | `/sdcard/Android/obb` |",
-        f"| 已知合计 | {known.get('total_human') or human_bytes(int(known.get('total_bytes') or 0))} | APK + 外部目录，不是应用总占用 |",
-        "| 内部 data / cache | 未读取 | shell 缺少 StorageStatsManager 权限或 Root |",
+        f"| 已知合计 | {known.get('total_human') or human_bytes(int(known.get('total_bytes') or 0))} | APK + 内部 data + 外部目录，不是应用总占用 |",
         "",
     ]
     top = app.get("top_external") or []
@@ -251,15 +291,16 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
         lines += [
             "### 外部存储占用较高的应用",
             "",
-            "| 应用 | 包名 | 外部合计 | data | media | obb | 外部 cache | 基础 APK |",
-            "|---|---|---|---:|---:|---:|---:|---:|",
+            "| 应用 | 包名 | 外部合计 | data | media | obb | 外部 cache | APK 合计 | 内部 data |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|",
         ]
         for item in top[:8]:
             lines.append(
                 f"| {md_escape(str(item.get('label') or '-'))} | {md_code(str(item.get('package') or ''))} | "
                 f"{item.get('external_total_human') or '-'} | {item.get('data_human') or '-'} | "
                 f"{item.get('media_human') or '-'} | {item.get('obb_human') or '-'} | "
-                f"{item.get('cache_human') or '-'} | {item.get('apk_human') or '-'} |"
+                f"{item.get('cache_human') or '-'} | {item.get('apk_human') or '-'} | "
+                f"{item.get('internal_data_human') or '-'} |"
             )
         lines.append("")
     residue = app.get("residue") or []

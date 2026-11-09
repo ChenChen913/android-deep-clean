@@ -277,6 +277,31 @@ def test_cleanup_html_zero_checks_is_not_reported_as_passed():
     assert "所有检查项通过" not in html
 
 
+def test_cleanup_html_has_mobile_layout_rules():
+    analysis, selection, execution, verification = _cleanup_bundle()
+    html = render_cleanup_html(analysis, selection, execution, verification)
+    assert 'name="viewport" content="width=device-width, initial-scale=1"' in html
+    assert "@media (max-width:640px)" in html
+    assert "@media (max-width:340px)" in html
+    assert "overflow-x:auto" in html
+    assert "width:max-content" in html
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in html
+    assert "overflow-wrap:anywhere" in html
+    assert "flex-wrap:nowrap" in html
+
+
+def test_analysis_and_cleanup_share_the_same_responsive_css():
+    analysis, selection, execution, verification = _cleanup_bundle()
+    analysis_html = render_analysis_html(analysis, {})
+    cleanup_html = render_cleanup_html(analysis, selection, execution, verification)
+    assert "@media (max-width:640px)" in analysis_html
+    assert "overflow-x:auto" in analysis_html
+    assert "width:max-content" in analysis_html
+    analysis_css = analysis_html.split("<style>", 1)[1].split("</style>", 1)[0]
+    cleanup_css = cleanup_html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert analysis_css == cleanup_css
+
+
 def test_execute_and_verify_write_cleanup_html(env):
     env.phone.file(CACHE + "/a.bin", size=300)
     env.phone.file(CACHE + "/b.bin", size=500)

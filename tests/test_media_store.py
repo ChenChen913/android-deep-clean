@@ -251,13 +251,62 @@ def test_no_media_skips_collection_but_analysis_still_runs(env):
     assert "本轮未采集" in report
 
 
-def test_recheck_no_media_is_reported_in_new_analysis(env):
-    env.phone.file(CAMERA + "/a.jpg", size=300)
-    env.set_media_store(images=[_row(1, "/storage/emulated/0/DCIM/Camera/a.jpg", size=300)])
+def test_media_store_zero_rows_with_scan_files_is_flagged(env):
+    for index in range(10):
+        env.phone.file(CAMERA + f"/photo-{index}.jpg", size=300 + index)
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
     env.prepare_analysis()
-    recheck = env.ok("recheck", "--no-media").json()
-    new_analysis = json.loads(Path(recheck["new_analysis_path"]).read_text(encoding="utf-8"))
-    assert new_analysis["summary"]["media_index"]["status"] == "disabled"
+
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["status"] == "zero_mismatch"
+    assert images["scan_files"] >= 10
+    assert manifest["status"] == "partial"
+    assert "与文件扫描不一致" in manifest["reason"]
+    assert manifest["crosscheck"]["zero_mismatch"] == ["images"]
+    assert any("不能据此认为媒体库为空" in item for item in manifest["limitations"])
+
+    media = env.analysis["summary"]["media_index"]
+    assert media["status"] == "partial"
+    assert media["collection_crosscheck"]["zero_mismatch"] == ["images"]
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "0 条但与扫描不一致" in report
+    assert "零记录异常" in report
+    assert "不能认定媒体库为空" in report
+
+
+def test_media_store_zero_rows_without_scan_files_is_empty_not_failure(env):
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
+    env.prepare_analysis()
+
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["status"] == "empty"
+    assert images["scan_files"] == 0
+    assert manifest["status"] == "collected"
+    assert "所有集合均为 0 条" in manifest["reason"]
+    assert manifest["available"] is True
+    assert manifest["crosscheck"]["zero_mismatch"] == []
+
+
+def test_one_failed_collection_does_not_hide_others(env):
+    env.phone.file(CAMERA + "/a.jpg", size=300)
+    env.set_media_store(
+        images=[_row(1, "/storage/emulated/0/DCIM/Camera/a.jpg", size=300)],
+        reject_columns={"images": ["_id"]},
+    )
+    env.ok("doctor")
+    env.ok("scan")
+
+    manifest = _manifest(env)
+    by_name = {item["name"]: item for item in manifest["collections"]}
+    assert by_name["images"]["status"] == "failed"
+    assert by_name["images"]["exit_code"] != 0
+    assert by_name["images"]["command"].startswith("content query")
+    assert by_name["images"]["attempts"] >= 3
+    assert manifest["status"] == "partial"
+    assert manifest["available"] is True
+
 
 
 def test_unavailable_media_store_degrades_without_failing(env):
@@ -291,3 +340,28 @@ def test_harmonyos_next_marks_media_store_unsupported(env):
     assert media["status"] == "unsupported"
     assert media["available"] is False
     assert "HarmonyOS NEXT" in media["reason"]
+
+
+def test_recheck_no_media_is_reported_in_new_analysis(env):
+    env.phone.file(CAMERA + "/a.jpg", size=300)
+    env.set_media_store(images=[_row(1, "/storage/emulated/0/DCIM/Camera/a.jpg", size=300)])
+    env.prepare_analysis()
+    recheck = env.ok("recheck", "--no-media").json()
+    new_analysis = json.loads(Path(recheck["new_analysis_path"]).read_text(encoding="utf-8"))
+    assert new_analysis["summary"]["media_index"]["status"] == "disabled"
+
+
+def test_sort_option_falls_back_without_sort(env):
+    env.phone.file(CAMERA + "/a.jpg", size=300)
+    env.set_media_store(
+        images=[_row(1, "/storage/emulated/0/DCIM/Camera/a.jpg", size=300)],
+        reject_sort=True,
+    )
+    env.ok("doctor")
+    env.ok("scan")
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["status"] == "ok"
+    assert images["rows"] == 1
+    assert images["attempts"] >= 2
+    assert "--sort" not in images["command"]

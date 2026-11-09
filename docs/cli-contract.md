@@ -129,3 +129,12 @@ device JSON 字段：`serial, sdk, release, manufacturer, model, build_type, abi
 - --backup-to 的备份文件内容/SHA-256 与源文件一致；备份失败时源文件仍在。
 - --hash-mode pc 必须在不调用设备 sha256 的情况下识别完全重复候选。
 - export 行数与 analysis items/files 一致；history 在第二次 scan 后出现归档。
+
+## v1.10.0 扫描、应用存储、MediaStore、隔离区与移动端
+
+- MediaStore：每个集合独立状态 `ok|empty|zero_mismatch|failed|skipped`；查询成功但 0 条且文件扫描同类文件达到 `zero_mismatch_min_files`（默认 10）时，集合为 `zero_mismatch`、整体 `partial`；没有同类文件时为 `empty`，不是失败。`sources.json` 记录 command、projection、exit_code、stderr、rows、attempts、elapsed。
+- 应用存储：`pm list packages -f` + 有上限的 `pm path`；APK 文件状态 `ok|missing|permission_denied|stat_failed`；split 状态 `collected|partial|disabled`。`/data/data` 只在 root/su 且存在 `du` 时做有上限的只读统计；普通 shell 明确 `unavailable`，禁止使用 `dumpsys diskstats`。
+- 特殊缓存：必须同时匹配名称/扩展名与允许根目录（`/sdcard/Android/data` 或已知聊天根目录）；`.qcl` 等候选一律 CAUTION/待确认，不进入 SAFE；DCIM 等用户媒体目录下的 `.cache` 不产生缓存候选。
+- 隔离区：execute 写入 `quarantine_real_roots`；purge/restore/verify 校验隔离根真实路径基线、隔离文件父目录真实路径；restore 目标父目录必须与记录路径 display-equivalent；无法解析 realpath 时拒绝。操作前再次 realpath 以缩小 TOCTOU 窗口。
+- HTML：640px / 340px 断点；320/360/390/430/1280 实测无页面级横向溢出；表格在 `.scroll` 内用 `width:max-content` 横向滚动；目录为单行横向滚动。
+- 新配置：`media_store.zero_crosscheck_min_files`、`app_storage.split_apk_max_packages`、`app_storage.internal_max_packages`。

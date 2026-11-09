@@ -511,6 +511,14 @@ def _try_junction(link: Path, target: Path) -> bool:
     return completed.returncode == 0 and Path(link).exists()
 
 
+def _make_dir_link(link: Path, target: Path) -> bool:
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        return _try_junction(link, target)
+
+
 def test_execute_refuses_parent_directory_link(env):
     env.phone.file("/sdcard/Misc/realcache/a.bin", size=300)
     cache_host = env.phone.host(CACHE)
@@ -539,6 +547,119 @@ def test_execute_refuses_parent_directory_link(env):
         assert "realpath" in item["error"]
     else:
         result.expect_error(3, 5, 6)
+
+
+def test_purge_and_restore_refuse_symlink_quarantine_file(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    outside = env.phone.host("/sdcard/Misc/outside.bin")
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_bytes(b"outside")
+    stored[0].unlink()
+    try:
+        os.symlink(outside, stored[0])
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"当前环境无法创建符号链接：{exc}")
+
+    purged = env.run(["quarantine", "purge", "--token", execution["purge_token"]])
+    purged.expect_error(6)
+    assert "不是普通文件" in purged.json()["failures"][0]["reason"]
+    assert outside.read_bytes() == b"outside"
+
+    restored = env.run("restore", "--all")
+    restored.expect_error(6)
+    assert "不是普通文件" in restored.json()["failures"][0]["reason"]
+    assert outside.read_bytes() == b"outside"
+
+
+def test_purge_and_restore_refuse_symlink_quarantine_parent(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+    qfile = stored[0]
+    qparent = qfile.parent
+
+    outside = env.phone.host("/sdcard/Misc/quarantine-escape")
+    outside.mkdir(parents=True, exist_ok=True)
+    moved = outside / qparent.name
+    shutil.move(str(qparent), str(moved))
+    if not _make_dir_link(qparent, moved):
+        pytest.skip("当前环境无法创建目录符号链接/联接")
+    assert qfile.exists(), "quarantine file should still resolve through the link"
+
+    purged = env.run(["quarantine", "purge", "--token", execution["purge_token"]])
+    purged.expect_error(6)
+    assert "父目录真实路径不在隔离区内" in purged.json()["failures"][0]["reason"]
+    assert qfile.exists()
+
+    restored = env.run("restore", "--all")
+    restored.expect_error(6)
+    assert "父目录真实路径不在隔离区内" in restored.json()["failures"][0]["reason"]
+    assert qfile.exists()
+
+
+def test_purge_refuses_replaced_quarantine_root(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    root_host = env.phone.host(execution["quarantine_root"])
+    moved = root_host.parent / (root_host.name + "-moved")
+    shutil.move(str(root_host), str(moved))
+    if not _make_dir_link(root_host, moved):
+        pytest.skip("当前环境无法创建目录符号链接/联接")
+    assert stored[0].exists(), "quarantine file should still resolve through the replaced root"
+
+    purged = env.run(["quarantine", "purge", "--token", execution["purge_token"]])
+    purged.expect_error(3)
+    assert "隔离区真实路径已变化" in (purged.stderr or "") + (purged.stdout or "")
+    assert stored[0].exists()
+
+
+def test_restore_refuses_symlinked_target_parent(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    cache_host = env.phone.host(CACHE)
+    outside = env.phone.host("/sdcard/Misc/escape-cache")
+    outside.mkdir(parents=True, exist_ok=True)
+    moved = outside / cache_host.name
+    if cache_host.exists():
+        shutil.move(str(cache_host), str(moved))
+    else:
+        moved.mkdir(parents=True, exist_ok=True)
+    if not _make_dir_link(cache_host, moved):
+        pytest.skip("当前环境无法创建目录符号链接/联接")
+
+    result = env.run("restore", "--all")
+    result.expect_error(6)
+    payload = result.json()
+    assert "恢复目标父目录被重定向" in payload["failures"][0]["reason"]
+    assert stored[0].exists()
+    assert not env.phone.exists(path)
 
 
 # ---------------------------------------------------------------- empty dirs / rmdir

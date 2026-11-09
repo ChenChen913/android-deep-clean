@@ -15,11 +15,13 @@ import os
 import posixpath
 import re
 import shutil
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
 from .platform import HARMONY_NEXT
+from .rules import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
 from .state import State
 from .transport import Transport, TransportError
 from .util import atomic_write_json, display_path, now_iso, shell_quote
@@ -291,24 +293,106 @@ class MediaStoreCollector:
             if len(raw) > self.max_items:
                 raw = raw[: self.max_items]
                 truncated = True
+        scan_counts = self._scan_counts()
+        threshold = max(1, int(self.settings.get("zero_crosscheck_min_files") or 10))
+        if not scan_counts:
+            limitations.append("无法读取文件扫描快照，未做 MediaStore 零记录交叉核对。")
+        zero_mismatch: list[str] = []
+        empty_collections: list[str] = []
+        for info in collection_info:
+            name = str(info.get("name") or "")
+            scan_count = int(scan_counts.get(name, 0))
+            info["scan_files"] = scan_count
+            if info.get("status") != "ok" or int(info.get("rows") or 0) != 0:
+                continue
+            if scan_count >= threshold:
+                info["status"] = "zero_mismatch"
+                info["crosscheck"] = "scan_has_files_but_index_empty"
+                info["error"] = (
+                    f"查询成功但返回 0 条；文件扫描发现 {scan_count} 个同类文件，"
+                    "可能是权限、Provider 或索引异常"
+                )
+                zero_mismatch.append(name)
+                limitations.append(
+                    f"{info.get('label') or name}媒体索引返回 0 条，但文件扫描发现 {scan_count} 个同类文件；"
+                    "不能据此认为媒体库为空。"
+                )
+            else:
+                info["status"] = "empty"
+                info["crosscheck"] = "no_scan_files"
+                empty_collections.append(name)
+        crosscheck = {
+            "threshold": threshold,
+            "scan_files": scan_counts,
+            "zero_mismatch": zero_mismatch,
+            "empty": empty_collections,
+            "note": "零记录不直接判失败；只有文件扫描发现同类文件达到阈值时才标记异常。",
+        }
         records = _merge_records(raw)
         if truncated or any(item.get("status") == "failed" for item in collection_info):
             limitations.append("媒体索引只完成部分采集；缺失集合不会影响文件扫描结果。")
         if any(item.get("status") == "failed" for item in collection_info):
-            status = "partial" if any(item.get("status") == "ok" for item in collection_info) else "unavailable"
+            status = "partial" if any(
+                item.get("status") in {"ok", "empty", "zero_mismatch"} for item in collection_info
+            ) else "unavailable"
             reason = "部分媒体集合不可用" if status == "partial" else "所有媒体集合均不可用"
-        elif not any(item.get("status") == "ok" for item in collection_info):
+        elif zero_mismatch:
+            status = "partial"
+            reason = "部分媒体集合查询成功但返回 0 条，与文件扫描不一致"
+        elif not any(item.get("status") in {"ok", "empty"} for item in collection_info):
             status = "unavailable"
             reason = "没有可采集的媒体集合"
         elif truncated:
             status = "partial"
             reason = "媒体索引超过条数上限，已截断"
+        elif all(item.get("status") in {"empty", "skipped"} for item in collection_info):
+            status = "collected"
+            reason = "查询成功；所有集合均为 0 条（可能是空媒体库）"
         else:
             status = "collected"
             reason = ""
         if status in {"collected", "partial"}:
             limitations.append("媒体索引与文件扫描口径不同；索引延迟、隐藏目录、多用户和部分 SD 卡都可能造成差异。")
-        return self._finish(status, reason, records, collection_info, started, limitations=limitations, truncated=truncated)
+        return self._finish(
+            status, reason, records, collection_info, started,
+            limitations=limitations, truncated=truncated, crosscheck=crosscheck,
+        )
+
+    def _scan_counts(self) -> dict[str, int]:
+        """Count same-kind files in the filesystem snapshot for zero-row checks."""
+        db_path = self.state.dir("scan") / "snapshot.db"
+        if not db_path.exists():
+            return {}
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return {}
+        try:
+            def count_exts(exts: set[str]) -> int:
+                placeholders = ",".join("?" for _ in exts)
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM entries WHERE kind='file' "
+                    "AND path LIKE '/sdcard/%' AND path NOT LIKE '/sdcard/Android/%' "
+                    "AND path NOT LIKE '%/.%' "
+                    f"AND lower(ext) IN ({placeholders})",
+                    tuple(sorted(exts)),
+                ).fetchone()
+                return int(row[0]) if row else 0
+
+            downloads = conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE kind='file' "
+                "AND path LIKE '/sdcard/Download/%' AND path NOT LIKE '%/.%'"
+            ).fetchone()
+            return {
+                "images": count_exts(IMAGE_EXTS),
+                "video": count_exts(VIDEO_EXTS),
+                "audio": count_exts(AUDIO_EXTS),
+                "downloads": int(downloads[0]) if downloads else 0,
+            }
+        except sqlite3.Error:
+            return {}
+        finally:
+            conn.close()
 
     def _collections(self) -> list[str]:
         configured = self.settings.get("collections")
@@ -330,6 +414,7 @@ class MediaStoreCollector:
         *,
         limitations: list[str] | None = None,
         truncated: bool = False,
+        crosscheck: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         items_path = self.aux_dir / "media-index.jsonl"
         temp_path = items_path.with_suffix(".jsonl.tmp")
@@ -348,6 +433,7 @@ class MediaStoreCollector:
             "sdk": self.sdk,
             "transport": self.transport.name,
             "collections": collection_info,
+            "crosscheck": crosscheck or {},
             "items": len(records),
             "bytes": sum(int(item.get("size") or 0) for item in records),
             "path_known": path_known,
@@ -386,60 +472,79 @@ class MediaStoreCollector:
             result.append((label, columns))
         return result
 
-    def _command(self, name: str, columns: list[str]) -> str:
+    def _command(self, name: str, columns: list[str], *, sort: bool = True) -> str:
         uri = f"content://media/external/{name}/media"
         projection = ":".join(columns)
-        return (
+        command = (
             f"content query --uri {shell_quote(uri)} "
-            f"--projection {shell_quote(projection)} --sort {shell_quote('_id ASC')}"
+            f"--projection {shell_quote(projection)}"
         )
+        if sort:
+            command += f" --sort {shell_quote('_id ASC')}"
+        return command
 
     def _query_collection(self, name: str) -> dict[str, Any]:
         started = time.monotonic()
         attempts = 0
         errors: list[str] = []
+        last_command = ""
+        last_rc: int | None = None
+        last_stderr = ""
+        last_stdout_bytes = 0
         for label, columns in self._projections(name, self.sdk):
-            attempts += 1
-            command = self._command(name, columns)
-            try:
-                rc, output, error = self.transport.shell_rc(command, timeout=self.timeout)
-            except TransportError as exc:
-                errors.append(f"{label}: {exc}")
+            for use_sort in (True, False):
+                attempts += 1
+                command = self._command(name, columns, sort=use_sort)
+                last_command = command
+                try:
+                    rc, output, error = self.transport.shell_rc(command, timeout=self.timeout)
+                except TransportError as exc:
+                    errors.append(f"{label}: {exc}")
+                    break
+                last_rc = rc
+                last_stderr = (error or "").strip()[:500]
+                last_stdout_bytes = len(output.encode("utf-8", errors="ignore"))
+                if self.max_output_bytes and last_stdout_bytes > self.max_output_bytes:
+                    errors.append(f"{label}: 输出超过 max_output_bytes={self.max_output_bytes}")
+                    break
+                if rc == 0:
+                    rows = parse_content_rows(output)
+                    if not rows and _looks_like_error(output, error):
+                        errors.append(f"{label}: {(error or output).strip()[:400]}")
+                        continue
+                    records = []
+                    malformed = 0
+                    for row in rows:
+                        try:
+                            records.append(normalize_record(name, row))
+                        except Exception:  # noqa: BLE001 - one bad row must not abort
+                            malformed += 1
+                    if malformed:
+                        errors.append(f"{label}: {malformed} 行无法解析")
+                    return {
+                        "name": name,
+                        "label": COLLECTION_LABELS.get(name, name),
+                        "available": True,
+                        "status": "ok",
+                        "rows": len(records),
+                        "bytes": sum(int(item.get("size") or 0) for item in records),
+                        "projection": columns,
+                        "projection_tier": label,
+                        "attempts": attempts,
+                        "error": "",
+                        "command": command,
+                        "exit_code": rc,
+                        "stderr": last_stderr,
+                        "stdout_bytes": last_stdout_bytes,
+                        "elapsed_seconds": round(time.monotonic() - started, 1),
+                        "records": records,
+                    }
+                message = (error or output).strip()[:500] or f"退出码 {rc}"
+                errors.append(f"{label}: {message}")
+                if use_sort and ("sort" in message.lower() or "unknown option" in message.lower()):
+                    continue  # retry the same projection without --sort
                 break
-            if self.max_output_bytes and len(output.encode("utf-8", errors="ignore")) > self.max_output_bytes:
-                errors.append(f"{label}: 输出超过 max_output_bytes={self.max_output_bytes}")
-                break
-            if rc == 0:
-                rows = parse_content_rows(output)
-                if not rows and _looks_like_error(output, error):
-                    errors.append(f"{label}: {(error or output).strip()[:400]}")
-                    continue
-                records = []
-                malformed = 0
-                for row in rows:
-                    try:
-                        records.append(normalize_record(name, row))
-                    except Exception:  # noqa: BLE001 - one bad row must not abort
-                        malformed += 1
-                if malformed:
-                    errors.append(f"{label}: {malformed} 行无法解析")
-                return {
-                    "name": name,
-                    "label": COLLECTION_LABELS.get(name, name),
-                    "available": True,
-                    "status": "ok",
-                    "rows": len(records),
-                    "bytes": sum(int(item.get("size") or 0) for item in records),
-                    "projection": columns,
-                    "projection_tier": label,
-                    "attempts": attempts,
-                    "error": "",
-                    "elapsed_seconds": round(time.monotonic() - started, 1),
-                    "records": records,
-                }
-            message = (error or output).strip()[:500] or f"退出码 {rc}"
-            errors.append(f"{label}: {message}")
-            if _fatal_error(message):
+            if _fatal_error(errors[-1] if errors else ""):
                 break
         return {
             "name": name,
@@ -452,6 +557,10 @@ class MediaStoreCollector:
             "projection_tier": "",
             "attempts": attempts,
             "error": "；".join(errors[-2:]),
+            "command": last_command,
+            "exit_code": last_rc,
+            "stderr": last_stderr,
+            "stdout_bytes": last_stdout_bytes,
             "elapsed_seconds": round(time.monotonic() - started, 1),
         }
 

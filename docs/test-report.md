@@ -1,13 +1,13 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.9.5，2026-11-09）
+## 当前版本摘要（v1.10.0，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.9.5 |
-| 本地 Mock | 264 passed / 1 skipped（265 collected） |
+| 验证对象 | 本地工作区 v1.10.0 |
+| 本地 Mock | 281 passed / 2 skipped（283 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 本轮改动 | restore 隔离路径与目标路径守卫；哈希工具缺失与计算异常分开处理并在报告中标记 |
+| 本轮改动 | 隐藏缓存规则、APK/split 与应用内部存储、MediaStore 零记录诊断、隔离区 realpath 守卫、HTML 移动端布局 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
 | 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
 | purge 真机结果 | 2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等（0 文件）；purge 后 restore 如实失败 |
@@ -23,6 +23,19 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.10.0 扫描覆盖、应用存储、MediaStore 与移动端报告（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `rules.py` / `analyzer.py` 特殊缓存、`app_storage.py` / `app_storage_index.py`、`media_store.py` / `media_index.py` / `reports.py`、`executor.py` / `transport.py` / `mock_transport.py`、`html_report.py` |
+| 隐藏缓存 | `.qcl` 在未知应用目录下为 CAUTION/待确认；在腾讯/QQ 应用目录下命中 `tencent-qcl` 规则；`Code Cache` 等浏览器缓存同样为 CAUTION；DCIM 下的 `.cache` 不产生缓存候选 |
+| APK 统计 | split APK 500 B + 200 B 合计 700 B，`apk_file_count=2`；APK 路径被标记 permission denied 时不写成 0 MB |
+| 内部 data | `privilege=root` 时用只读 `du` 统计 `/data/data`，cache/code_cache 作为子集；普通 shell 为 unavailable；`/data/data` 不可访问时为 permission_denied |
+| MediaStore | 文件扫描有 10 张图片、索引 0 条时 images=`zero_mismatch`、整体 `partial`；无同类文件时 images=`empty`、整体 `collected`；单集合失败不掩盖其他集合 |
+| 符号链接逃逸 | journal 隔离路径越界/穿越、隔离文件 symlink、父目录 symlink、隔离根被替换、恢复目标父目录被替换均被拒绝；Windows 文件 symlink 用例跳过，Linux CI 执行 |
+| 移动端布局 | Chromium 实测 320/360/390/430/1280：两份报告均无页面级横向溢出；360 使用两列卡片，320 使用单列；目录为单行横向滚动；表格在 `.scroll` 内横向滚动 |
+| 自动化测试 | 全量 281 passed, 2 skipped（新增 18 个用例/参数化用例） |
 
 ### v1.9.5 restore 路径守卫与哈希状态（2026-11-09）
 

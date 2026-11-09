@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.9.5`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.10.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -400,6 +400,8 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 扫描有、索引无：可能是隐藏目录、未索引或应用私有媒体，**不代表异常**。
 - 大小不一致：索引可能过期，以文件系统为准。
 - `trashed` / `pending`：只提示索引状态，不改变风险。
+- **零记录诊断**：每个集合独立标记 `ok` / `empty` / `zero_mismatch` / `failed` / `skipped`。查询成功但返回 0 条时，如果文件扫描发现同类文件达到阈值（默认 10 个），标记 `zero_mismatch`，整体状态变为 `partial`，报告明确提示“不能认定媒体库为空”；没有同类文件时标记 `empty`，不当作失败。
+- `sources.json` 记录实际查询命令、投影字段、退出码、stderr、返回行数、尝试次数和耗时，便于排查权限、Provider 或兼容性问题。
 
 媒体索引只作为证据，不生成候选、不改变风险等级、不改变可选择性，也不计入文件扫描合计。清理仍需 `plan → select → token → execute`。
 
@@ -419,26 +421,36 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-app-storage
 ```
 
-采集方式：`pm list packages -f` 获取基础 APK 路径，再用批量 `stat` 读取大小。结果写入 `scan/aux/app-storage.json`，不读取手机文件内容，不需要 Root。
+采集方式：`pm list packages -f` 获取基础 APK 路径；对有限数量的应用（默认最多 120 个）执行 `pm path <package>`，识别基础 APK 与 split APK，再用批量 `stat` 读取大小。基础 APK 统计不需要 Root；`/data/data` 内部数据只有在 root/su 且存在 `du` 时才做有上限的只读统计。结果写入 `scan/aux/app-storage.json`。
 
 `analyze` 会在报告增加「应用级存储（部分口径）」区块，并写入 `analysis-summary.json` 的 `summary.app_storage`：
 
-- 已知：基础 APK、外部 `Android/data` / `Android/media` / `Android/obb`、外部 cache。
-- 未知：应用内部 data/cache、split APK。
+- 已知：基础 APK、已查询到的 split APK、外部 `Android/data` / `Android/media` / `Android/obb`、外部 cache。
+- 条件已知：root/su 下用只读 `du` 统计的应用内部 data/cache/code_cache（默认最多 60 个应用，优先外部数据较大的包）。内部统计使用 `/data/data`（通常指向 `/data/user/0`），不重复扫描 `/data/user`。
+- 未知或部分：普通 shell 下的内部 data/cache、超出 split 查询上限的应用、路径缺失/权限不足/stat 失败的应用。
+- 状态会明确区分 `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`，不会把未知数据写成 0 MB。
 - 能列出外部存储占用较高的应用，以及未安装应用仍保留的外部目录。
-- 应用类候选（app_cache / browser_cache / chat_cache / residue）会附带包级 APK 与外部目录证据，但仍是证据，不改变风险或可选择性。
+- 应用类候选（app_cache / browser_cache / chat_cache / residue）会附带包级 APK、内部 data 与外部目录证据，但仍是证据，不改变风险或可选择性。
 
-**为什么不是完整应用占用**：当前 ADB shell 没有 StorageStatsManager 读取其他应用内部数据的权限；`dumpsys diskstats` 会写系统缓存文件，违反只读原则，因此不使用；辅助 APK 需要额外授权与长期维护，本版本不做。所以这里的“已知合计”不能当作应用总占用，也不能与设备已用空间相加。
+**为什么不是完整应用占用**：`StorageStatsManager` 需要应用进程权限，shell 不能直接调用；`dumpsys diskstats` 会写系统缓存文件，违反只读原则，因此不使用。root/su 下的 `du` 统计是有上限的抽样，不是全量；split APK 查询也有应用数量上限。所以这里的“已知合计”不能当作应用总占用，也不能与设备已用空间相加。
 
-真机验证（HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。内部 data/cache 未读取，未修改任何手机文件。
+历史真机验证（v1.5.0 / HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。v1.10.0 新增的 split APK 与内部 data 统计仅完成 mock/单元验证，**未重新做真机验收**。
+
+### 隐藏与特殊缓存（v1.10.0）
+
+- 扫描使用 `find` 遍历，不跳过隐藏目录/文件；分析阶段新增 `gen_special_caches()`。
+- 规则同时要求“名称/扩展名 + 允许的根目录”：`.qcl`、`.cache`、`.ucache`、`.webcache`、`Code Cache`、`GPUCache`、`Service Worker`、`CacheStorage` 等只在 `/sdcard/Android/data` 或已知聊天根目录内识别。
+- 所有特殊缓存候选都是 **CAUTION**，`ai_review_required=true`，不会进入 SAFE。`.qcl` 在腾讯/QQ 应用目录下使用更具体的规则，其他应用下标记“来源未确认”。
+- 不在 DCIM、Documents 等用户媒体目录按隐藏名称清理；数据库、配置、账号、离线内容仍由 `guard_path` 保护。
+- 厂商自定义顶层目录（MIUI/Huawei/OPPO/vivo 等）可能混有用户数据，未自动认定为缓存；只处理 `Android/data` 下结构明确的缓存。
 
 ### 空间去向速览与候选解释（v1.6.0）
 
 `report-before.md` 开头新增「空间去向速览」，不要求用户自己换算口径：
 
-- 列出设备已用、文件扫描、基础 APK、应用外部目录、媒体索引五项，并标注每项“是否与其他项重叠”。
-- 给出「已知且不重叠合计」（文件扫描 + 基础 APK）与「未解释差额」。
-- 明确说明应用外部目录与媒体索引已包含在文件扫描内，**不能重复相加**。
+- 列出设备已用、文件扫描、APK（基础 + split）、可读的内部 data、应用外部目录、媒体索引，并标注每项“是否与其他项重叠”。
+- 给出「已知且不重叠合计」（文件扫描 + APK + 可读内部 data）与「未解释差额」。
+- 明确说明应用外部目录与媒体索引已包含在文件扫描内，**不能重复相加**；内部 data 包含 cache/code_cache，是子集。
 - 列出各数据源的关系，以及当前无法解释的部分。
 
 每个候选新增三行固定解释：
@@ -581,10 +593,13 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 | `media_store.collections` | 四个集合 | `images/video/audio/downloads` |
 | `media_store.timeout_seconds` | 60 | 单个集合查询超时 |
 | `media_store.max_items` | 200000 | 媒体索引条数上限，超限标记截断 |
-| `app_storage.enabled` | `true` | 是否采集应用基础 APK 大小 |
-| `app_storage.timeout_seconds` | 30 | 单批 `stat` 超时 |
+| `media_store.zero_crosscheck_min_files` | 10 | 0 条结果与文件扫描交叉核对的最小同类文件数 |
+| `app_storage.enabled` | `true` | 是否采集应用 APK 与内部存储 |
+| `app_storage.timeout_seconds` | 30 | 单批 `stat` / `pm path` / `du` 超时 |
 | `app_storage.max_packages` | 1000 | 最多采集的应用数 |
 | `app_storage.top_apps` | 15 | 报告展示的应用数 |
+| `app_storage.split_apk_max_packages` | 120 | 最多执行 `pm path` 的应用数；超出后只统计基础 APK |
+| `app_storage.internal_max_packages` | 60 | root/su 下最多用 `du` 统计的应用数 |
 
 ## 项目结构
 
@@ -611,7 +626,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.9.5 实测：264 passed, 1 skipped（265 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.10.0 实测：281 passed, 2 skipped（283 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -658,8 +673,10 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 目录档案按路径识别，重命名会显示为“未再出现 + 新增”；扫描不完整或环境变化时不做消失判断。
 - 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
 - 目录档案与覆盖率改动尚未完成真机验收。
-- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。
-- 应用级存储只统计基础 APK 与外部目录；内部 data/cache 需要 StorageStatsManager 权限或 Root，本版本明确标记为未知。未使用会写系统缓存的 `dumpsys diskstats`，也未开发辅助 APK。
+- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对，只有同类文件达到阈值时才标记 `zero_mismatch`。
+- 应用级存储：基础 APK 不需要 Root；split APK 查询有应用数量上限；内部 data/cache 只有在 root/su 且存在 `du` 时才做有上限的只读统计。普通 shell 下明确标记为不可读。未使用会写系统缓存的 `dumpsys diskstats`，也未开发 StorageStatsManager 辅助 APK。
+- 隐藏/特殊缓存只按“名称/扩展名 + 允许根目录”识别，且全部是 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。
+- 隔离区路径校验使用 `realpath` 缩小 TOCTOU 窗口，但 adb shell 无法提供 `openat/O_NOFOLLOW` 级别的原子保证；无法解析真实路径时一律拒绝操作。
 - 永久删除（purge）只在自建测试文件上验证过；对用户真实数据尚未验收。
 - HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，也不使用 Android MediaStore；`bm clean` 未接入执行器。
 - 手机端 Termux / Shizuku 通路尚未完成真机验收。

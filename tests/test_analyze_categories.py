@@ -341,3 +341,57 @@ def test_fresh_files_are_not_flagged_by_age_rules(env):
     assert not env.analysis_items("apk")
     assert not env.analysis_items("large_old")
     assert not env.analysis_items("screenshots")
+
+
+def test_qcl_special_cache_is_caution_not_safe(env):
+    env.phone.file("/sdcard/Android/data/com.installed.app/.qcl/a.bin", size=300)
+    _analyze(env)
+    item = next(
+        (item for item in env.analysis["items"] if item["primary_path"].endswith("/.qcl")),
+        None,
+    )
+    assert item is not None
+    assert item["category"] == "app_cache"
+    assert item["risk"] == "CAUTION"
+    assert item["ai_review_required"] is True
+    texts = [entry["text"] for entry in item["evidence"]]
+    assert any("特殊缓存" in text for text in texts)
+    assert any("未确认" in text for text in texts)
+
+
+def test_qcl_under_tencent_uses_specific_rule(env):
+    env.set_packages(installed=["com.tencent.mobileqq"], uninstalled=[], system=["android"], available=True)
+    env.phone.file("/sdcard/Android/data/com.tencent.mobileqq/.qcl/a.bin", size=300)
+    _analyze(env)
+    item = next(
+        (item for item in env.analysis["items"] if item["primary_path"].endswith("/.qcl")),
+        None,
+    )
+    assert item is not None
+    assert item["category"] == "chat_cache"
+    assert item["risk"] == "CAUTION"
+    assert any("tencent-qcl" in entry["text"] for entry in item["evidence"])
+
+
+def test_hidden_cache_outside_app_data_is_not_a_candidate(env):
+    env.phone.file("/sdcard/DCIM/.cache/photo.jpg", size=300)
+    analysis = _analyze(env)
+    assert not [
+        item for item in analysis["items"]
+        if item["category"] in {"app_cache", "browser_cache", "chat_cache"}
+        and (item["primary_path"].endswith("/.cache") or "/.cache/" in item["primary_path"])
+    ]
+
+
+def test_browser_code_cache_is_caution(env):
+    env.set_packages(installed=["com.android.chrome"], uninstalled=[], system=["android"], available=True)
+    env.phone.file("/sdcard/Android/data/com.android.chrome/Code Cache/js.bin", size=300)
+    _analyze(env)
+    item = next(
+        (item for item in env.analysis["items"] if item["primary_path"].endswith("/Code Cache")),
+        None,
+    )
+    assert item is not None
+    assert item["category"] == "browser_cache"
+    assert item["risk"] == "CAUTION"
+    assert any("特殊缓存" in entry["text"] for entry in item["evidence"])

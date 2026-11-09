@@ -88,6 +88,7 @@ class PackageIndex:
     uninstalled: set[str] = field(default_factory=set)
     system: set[str] = field(default_factory=set)
     apk_paths: dict[str, str] = field(default_factory=dict)
+    apk_path_list: dict[str, list[str]] = field(default_factory=dict)
     versions: dict[str, str] = field(default_factory=dict)
     version_available: bool = False
     available: bool = True
@@ -106,6 +107,7 @@ class PackageIndex:
             "uninstalled": sorted(self.uninstalled),
             "system": sorted(self.system),
             "apk_paths": dict(sorted(self.apk_paths.items())),
+            "apk_path_list": {key: list(value) for key, value in sorted(self.apk_path_list.items())},
             "versions": dict(sorted(self.versions.items())),
             "version_available": self.version_available,
             "available": self.available,
@@ -114,11 +116,31 @@ class PackageIndex:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "PackageIndex":
+        raw_paths = dict(data.get("apk_paths") or {})
+        path_list: dict[str, list[str]] = {}
+        for package, value in raw_paths.items():
+            if isinstance(value, (list, tuple)):
+                paths = [str(item) for item in value if item]
+                if paths:
+                    path_list[str(package)] = paths
+        for package, value in (data.get("apk_path_list") or {}).items():
+            if isinstance(value, (list, tuple)):
+                paths = [str(item) for item in value if item]
+                if paths:
+                    path_list[str(package)] = paths
+        base_paths = {
+            str(package): (value[0] if isinstance(value, (list, tuple)) and value else str(value))
+            for package, value in raw_paths.items()
+            if value
+        }
+        for package, paths in path_list.items():
+            base_paths.setdefault(package, paths[0])
         return PackageIndex(
             installed=set(data.get("installed") or []),
             uninstalled=set(data.get("uninstalled") or []),
             system=set(data.get("system") or []),
-            apk_paths=dict(data.get("apk_paths") or {}),
+            apk_paths=base_paths,
+            apk_path_list=path_list,
             versions={str(k): str(v) for k, v in (data.get("versions") or {}).items()},
             version_available=bool(data.get("version_available") or data.get("versions")),
             available=bool(data.get("available", True)),

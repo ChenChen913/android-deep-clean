@@ -76,12 +76,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeout_seconds": 60,
         "max_items": 200000,
         "max_output_bytes": 100000000,
+        "zero_crosscheck_min_files": 10,
     },
     "app_storage": {
         "enabled": True,
         "timeout_seconds": 30,
         "max_packages": 1000,
         "top_apps": 15,
+        "split_apk_max_packages": 120,
+        "internal_max_packages": 60,
     },
     "exclude_paths": [
         "/sdcard/.android-deep-clean",
@@ -132,14 +135,14 @@ def _validate_config(config: dict[str, Any]) -> None:
         value = config["archive"].get(key)
         if not isinstance(value, int) or value < 0:
             raise ValidationError(f"config.archive.{key} must be a non-negative integer")
-    for key in ("timeout_seconds", "max_items", "max_output_bytes"):
+    for key in ("timeout_seconds", "max_items", "max_output_bytes", "zero_crosscheck_min_files"):
         value = config["media_store"].get(key)
         if not isinstance(value, int) or value < 0:
             raise ValidationError(f"config.media_store.{key} must be a non-negative integer")
     collections = config["media_store"].get("collections")
     if not isinstance(collections, list) or any(item not in {"images", "video", "audio", "downloads"} for item in collections):
         raise ValidationError("config.media_store.collections must be a list of images/video/audio/downloads")
-    for key in ("timeout_seconds", "max_packages", "top_apps"):
+    for key in ("timeout_seconds", "max_packages", "top_apps", "split_apk_max_packages", "internal_max_packages"):
         value = config["app_storage"].get(key)
         if not isinstance(value, int) or value < 0:
             raise ValidationError(f"config.app_storage.{key} must be a non-negative integer")

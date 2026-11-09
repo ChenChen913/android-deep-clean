@@ -56,6 +56,11 @@
 - 恢复依赖本机 .adc-state/journal；状态丢失则无法自动恢复。
 - 跨文件系统移动可能失败；失败时源文件保留，报告失败。
 - 隔离文件完整性：purge / restore / verify 始终校验大小；只有 execute 使用 `--backup-to` 时才有 SHA-256 内容基准。未备份的执行无法发现“大小相同但内容被替换”的隔离文件。设备没有 sha256sum/md5sum 或只有 md5 时只能校验大小，报告会明确标记“仅大小校验 / 未做内容校验”。
+- 隔离区路径：execute 记录 `quarantine_real_roots`；purge/restore/verify 用 realpath 校验根、父目录与恢复目标。realpath 检查缩小了 TOCTOU 窗口，但 adb shell 无法提供 `openat/O_NOFOLLOW` 级别的原子保证；无法解析真实路径时拒绝操作。
+- 应用内部 data：只有 root/su 且存在 `du` 时才做有上限的只读抽样（默认 60 个应用），不是全量；普通 shell 标记 unavailable，不使用 `dumpsys diskstats`。内部统计使用 `/data/data`（通常指向 `/data/user/0`），不重复扫描 `/data/user`。
+- split APK：`pm path` 查询有应用数量上限（默认 120），超出后只统计基础 APK 并标记 partial。
+- MediaStore：0 条结果会与文件扫描交叉核对；同类文件达到阈值才标记 `zero_mismatch`，低于阈值标记 `empty`。索引延迟、权限、OEM Provider 差异仍可能导致误判，报告保留原始查询命令与错误。
+- 特殊缓存：只按“名称/扩展名 + 允许根目录”识别，全部为 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。
 - 应用可能在清理后立即重建缓存；verify 可能看到源路径重新出现，报告为异常但不算数据丢失。
 - 不处理系统级清理（系统缓存分区、ART 编译缓存等）。
 
@@ -63,6 +68,7 @@
 - 主要验证环境为 Windows + Python 3.13 + mock；真机 ADB 端到端尚未在本环境执行。
 - 未在 Android 5–9 老设备上实测。
 - 未在微信/QQ 最新版本真机路径上完整验证。
+- HTML 移动端已用 Chromium 在 320/360/390/430/1280 视口检查，未在真实 iOS Safari、微信内置浏览器和国产浏览器上逐一验收。
 
 ## 2. 后续改进方向
 
