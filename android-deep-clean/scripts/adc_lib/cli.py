@@ -666,6 +666,11 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
     doctor = {
         "device": previous_meta.get("device") or {},
         "android": previous_meta.get("android", ""),
+        "platform": (
+            previous_meta.get("platform")
+            or (previous_meta.get("capabilities") or {}).get("platform")
+            or ""
+        ),
         "capabilities": previous_meta.get("capabilities") or {},
         "limitations": previous_meta.get("limitations") or [],
         "storage": previous_meta.get("storage") or [],

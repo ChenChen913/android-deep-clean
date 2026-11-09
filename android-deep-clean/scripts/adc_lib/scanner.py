@@ -373,7 +373,11 @@ class Scanner:
             "device_identity": (self.doctor.get("device_identity") or {}),
             "previous_scan": previous_scan,
             "android": self.doctor.get("android", ""),
-            "platform": (self.doctor.get("platform") or "android"),
+            "platform": (
+                self.doctor.get("platform")
+                or (self.doctor.get("capabilities") or {}).get("platform")
+                or "android"
+            ),
             "capabilities": (self.doctor.get("capabilities") or {}),
             "limitations": (self.doctor.get("limitations") or []),
             "storage": storage,

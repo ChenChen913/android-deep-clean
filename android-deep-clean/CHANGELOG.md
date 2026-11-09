@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.6.1 — 修复 recheck 误判环境变化
+
+### Fixed
+- 真机发现并修复：`recheck` 内部重建 `doctor` 字典时缺少 `platform` 字段，导致 `snapshot-meta.json` 的 `platform` 退化为 `android`；HarmonyOS 兼容版因此每轮都被目录档案判定为「环境变化」并重置基线。
+- `Scanner` 写 `snapshot-meta.json` 时改为回退读取 `capabilities.platform`；`recheck` 构造 `doctor` 时也显式带上 `platform`。
+- 新增回归测试：HarmonyOS 兼容版 `scan → analyze → recheck` 后 `environment_changed=false`、`baseline=false`、`environment.platform=harmonyos_compat`。
+
+### Verified
+- 真机（HONOR HLK-AL00 / Android 10）：修复后连续两轮 `recheck`，第二轮 `environment_changed=false`、`baseline=false`、平台正确为 `harmonyos_compat`。
+- 同轮真机只读回归：`recheck`、`inspect`、`plan`、`select`、`archive diff/stats`、`export`、`scan --no-media --no-app-storage` 全部正常。
+- 全量 234 passed, 1 skipped。
+
+### Safety
+- 本轮只读：未执行 `execute` / `purge` / `restore`，手机隔离区不存在，确认没有任何文件被移动或删除。
+- 生成的 `select` 令牌未被使用；未产生 `execution.json`。
+
 ## v1.6.0 — 空间去向速览与候选解释
 
 ### Added

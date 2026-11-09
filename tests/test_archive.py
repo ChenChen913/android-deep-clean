@@ -253,6 +253,32 @@ def test_no_package_manager_never_invents_orphans(env):
     assert diff["orphan_suspect"] == []
 
 
+def test_recheck_keeps_platform_and_does_not_reset_baseline(env):
+    """Regression: recheck rebuilt scan meta without `platform`, so a
+    HarmonyOS compat device was archived as `android` and every recheck
+    reported a false environment change."""
+    env.phone.file("/sdcard/DCIM/Camera/a.jpg", size=300)
+    env.device.update({
+        "platform": "harmonyos_compat",
+        "sdk": 29,
+        "release": "10",
+        "os_version": "3.0.0",
+        "harmony_version": "3.0.0",
+    })
+    env.flush()
+    env.ok("doctor")
+    env.ok("scan")
+    env.ok("analyze")
+    first = _diff(env)
+    assert first["baseline"] is True
+
+    recheck = env.ok("recheck").json()
+    changes = recheck["directory_changes"]
+    assert changes["environment_changed"] is False
+    assert changes["baseline"] is False
+    assert changes["environment"]["platform"] == "harmonyos_compat"
+
+
 def test_old_snapshot_without_dir_stats_still_analyzes(env):
     env.phone.file(CACHE + "/a.bin", size=300)
     env.prepare_analysis()

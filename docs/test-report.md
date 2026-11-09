@@ -1,25 +1,44 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.6.0，2026-11-09）
+## 当前版本摘要（v1.6.1，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.6.0 |
-| 本地 Mock | 233 passed / 1 skipped（234 collected） |
+| 验证对象 | 本地工作区 v1.6.1 |
+| 本地 Mock | 234 passed / 1 skipped（235 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 新增能力验证 | 空间去向速览 + 候选三问解释：5 个自动化/mock 用例 + 1 台真机只读验证 |
-| 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB 的 doctor、scan、analyze 全部成功 |
+| 新增能力验证 | 空间去向速览 + 候选三问解释；recheck 平台误判修复；均完成 1 台真机只读验证 |
+| 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
+| 本轮真机命令 | `recheck ×2`、`inspect`、`plan`、`select`、`archive diff/stats`、`export`、`scan --no-media --no-app-storage` |
+| recheck 修复验证 | 第二轮 `environment_changed=false`、`baseline=false`、`environment.platform=harmonyos_compat` |
 | 空间速览真机结果 | 设备已用 78.81 GB；文件扫描 11.08 GB（14.1%）；基础 APK 8.98 GB；已知不重叠 20.06 GB；未解释差额 58.75 GB |
-| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配，8 条仅大小写不同，1 条在扫描范围外，范围内缺失 0 条 |
+| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配；`downloads` 集合不可用 |
 | 应用级存储真机结果 | 293 个应用，基础 APK 8.98 GB；49 个应用外部 data 合计 1.92 GB；内部 data/cache 未读取 |
-| 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功；**仅测试文件，未处理用户真实数据** |
-| 真实设备清理/恢复 | 0 台完成正式验收；本轮未执行 select/execute/purge/restore |
+| 安全确认 | 未执行 execute/purge/restore；手机隔离区不存在；未生成 execution.json；select 令牌未使用 |
+| 真实设备清理/恢复 | 0 台完成正式验收 |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
 | 当前定位 | 只读链路与多数据源解释已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.6.1 recheck 平台误判修复与全链路只读回归（2026-11-09）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），shell 权限（无 root）。全程只读。
+
+| 项目 | 结果 |
+|---|---|
+| 真机缺陷 | `recheck` 重建 doctor 时缺 `platform`，导致 meta 平台退化为 `android`，HarmonyOS 兼容版每轮被判「环境变化」并重置基线 |
+| 修复后验证 | 连续两轮 recheck：第二轮 `baseline=false`、`environment_changed=false`、`platform=harmonyos_compat` |
+| recheck | 候选 35 组；新增 2 组（来自默认配置启用重复检测）；目录 290 个，新增/增长/消失均 0 |
+| inspect | `thumbnails-6919b1bd0b` 只读查看 40 个条目，返回 explain 三问 |
+| plan | 33 组；可选 1 组（SAFE 缩略图，32 文件 / 5.11 MB）；需复核 32 组 |
+| select | 生成隔离模式选择与 12 位确认令牌，未执行 |
+| archive | 290 个目录 / 11.14 GB 跟踪；5 个疑似残留（含 `com.android.vending`、`com.google.android.gms` 等 OEM/GMS OBB，仅线索） |
+| export | 生成 analysis-items.csv 与 analysis-files.csv |
+| 降级 | `scan --no-media --no-app-storage` 成功；两个辅助源均为 `disabled`、0 条；覆盖率仍 good |
+| 安全 | 未执行 execute/purge/restore；`/sdcard/.android-deep-clean/quarantine` 不存在；未生成 execution.json |
 
 ### v1.6.0 空间去向速览与候选解释（2026-11-09）
 
