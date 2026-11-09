@@ -228,6 +228,21 @@ python "$Skill\scripts\adc.py" recheck --state $State --transport adb
 
 新增候选需要重新复核/计划/选择/确认，不能复用旧令牌。
 
+### 4.10 跨轮目录档案
+
+~~~powershell
+# 首次 scan 建立基线；之后每次 scan 生成目录差分
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序列号>
+python "$Skill\scripts\adc.py" archive diff --state $State
+python "$Skill\scripts\adc.py" archive stats --state $State
+
+# 给目录写分析标记（不是删除授权）
+python "$Skill\scripts\adc.py" archive mark --state $State `
+  --path /sdcard/DCIM/Camera --decision keep --note "用户相片目录"
+~~~
+
+扫描不完整、权限缺口、系统升级或切换用户时，档案不做消失判断。详细规则见 [跨轮目录档案](../android-deep-clean/references/directory-archive.md)。
+
 ## 5. 专项清理示例
 
 | 用户目标 | 推荐选择 |

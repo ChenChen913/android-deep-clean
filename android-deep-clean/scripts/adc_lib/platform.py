@@ -68,7 +68,7 @@ ANDROID_PROBES = (
     "/data/data",
     "/data/local/tmp",
 )
-ANDROID_COMMANDS = ("find", "stat", "xargs", "sha256sum", "md5sum", "df", "pm", "realpath", "rm", "mv", "rmdir", "su")
+ANDROID_COMMANDS = ("find", "stat", "xargs", "sha256sum", "md5sum", "df", "pm", "am", "realpath", "rm", "mv", "rmdir", "su")
 HARMONY_COMMANDS = ("find", "stat", "xargs", "sha256sum", "md5sum", "df", "rm", "mv", "rmdir", "ls", "toybox", "param", "bm")
 
 PROFILES: dict[str, PlatformProfile] = {

@@ -62,6 +62,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_ai_review_for_caution": True,
         "generic_cache_risk": "caution",
     },
+    "archive": {
+        "enabled": True,
+        "min_dir_bytes": 10 * 1024 * 1024,
+        "grow_bytes": 50 * 1024 * 1024,
+        "grow_percent": 20,
+        "max_entries": 50000,
+        "max_diff_items": 200,
+    },
+    "media_store": {
+        "enabled": True,
+        "collections": ["images", "video", "audio", "downloads"],
+        "timeout_seconds": 60,
+        "max_items": 200000,
+        "max_output_bytes": 100000000,
+    },
     "exclude_paths": [
         "/sdcard/.android-deep-clean",
         "/sdcard/Android/.android-deep-clean",
@@ -96,7 +111,7 @@ def load_config(path: str | None = None) -> dict[str, Any]:
 
 
 def _validate_config(config: dict[str, Any]) -> None:
-    for key in ("thresholds", "scan", "report", "quarantine", "safety"):
+    for key in ("thresholds", "scan", "report", "quarantine", "safety", "archive", "media_store"):
         if not isinstance(config.get(key), dict):
             raise ValidationError(f"config.{key} must be an object")
     for key in ("max_files", "max_depth", "max_hash_files", "max_candidates"):
@@ -107,6 +122,17 @@ def _validate_config(config: dict[str, Any]) -> None:
         value = config["report"].get(key)
         if not isinstance(value, int) or value < 0:
             raise ValidationError(f"config.report.{key} must be a non-negative integer")
+    for key in ("min_dir_bytes", "grow_bytes", "grow_percent", "max_entries", "max_diff_items"):
+        value = config["archive"].get(key)
+        if not isinstance(value, int) or value < 0:
+            raise ValidationError(f"config.archive.{key} must be a non-negative integer")
+    for key in ("timeout_seconds", "max_items", "max_output_bytes"):
+        value = config["media_store"].get(key)
+        if not isinstance(value, int) or value < 0:
+            raise ValidationError(f"config.media_store.{key} must be a non-negative integer")
+    collections = config["media_store"].get("collections")
+    if not isinstance(collections, list) or any(item not in {"images", "video", "audio", "downloads"} for item in collections):
+        raise ValidationError("config.media_store.collections must be a list of images/video/audio/downloads")
     if not isinstance(config.get("extra_protected_paths"), list):
         raise ValidationError("config.extra_protected_paths must be a list")
 

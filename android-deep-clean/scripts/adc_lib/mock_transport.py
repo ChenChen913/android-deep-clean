@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import posixpath
+import re
+import shlex
 import shutil
 import stat as stat_module
 import time
@@ -175,7 +177,58 @@ class MockTransport(Transport):
         raise TransportError("mock transport 不执行任意 shell 命令")
 
     def shell_rc(self, command: str, *, timeout: int = 120) -> tuple[int, str, str]:
+        try:
+            parts = shlex.split(command, posix=True)
+        except ValueError as exc:
+            raise TransportError(f"mock: 无法解析 shell 命令：{exc}") from exc
+        if parts[:2] == ["content", "query"]:
+            return self._mock_content_query(parts)
         raise TransportError("mock transport 不执行任意 shell 命令")
+
+    def _mock_content_query(self, parts: list[str]) -> tuple[int, str, str]:
+        uri = ""
+        projection: list[str] = []
+        for index, part in enumerate(parts):
+            if part == "--uri" and index + 1 < len(parts):
+                uri = parts[index + 1]
+            elif part == "--projection" and index + 1 < len(parts):
+                projection = [item for item in parts[index + 1].split(":") if item]
+        match = re.match(r"^content://media/([^/]+)/([^/]+)/media$", uri)
+        if not match:
+            return 1, "", f"mock: 不支持的 MediaStore URI：{uri}"
+        collection = match.group(2)
+        media = self.caps.get("media_store")
+        if not isinstance(media, dict):
+            return 1, "", "mock: MediaStore fixture 未提供（caps.media_store）"
+        if media.get("unavailable"):
+            return 1, "", str(media.get("reason") or "mock: MediaStore 不可用")
+        rejected = [
+            column for column in projection
+            if column in (media.get("reject_columns") or {}).get(collection, [])
+        ]
+        if rejected:
+            return 1, "", f"Error: Invalid column {rejected[0]}"
+        rows = media.get(collection) or []
+        if not isinstance(rows, list):
+            return 1, "", f"mock: media_store[{collection!r}] 必须是列表"
+        if not projection:
+            projection = ["_id", "_display_name", "_size", "date_modified", "mime_type"]
+        lines: list[str] = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            cells = []
+            for column in projection:
+                value = row.get(column)
+                if value is None:
+                    text = "null"
+                elif isinstance(value, bool):
+                    text = "1" if value else "0"
+                else:
+                    text = str(value)
+                cells.append(f"{column}={text}")
+            lines.append(f"Row: {index} " + ", ".join(cells))
+        return 0, "\n".join(lines) + ("\n" if lines else ""), ""
 
     def getprop(self, key: str) -> str:
         props = self._device_data.get("props") or {}

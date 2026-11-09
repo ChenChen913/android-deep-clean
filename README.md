@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.2.8`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.4.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -177,7 +177,9 @@ python "$Skill\scripts\adc.py" doctor --state $State --transport adb --serial $S
 python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
 ```
 
-默认扫描 `/sdcard`；Root 下会追加 `/data/data/*/cache`。常用参数：`--roots /sdcard/Download`、`--max-depth 32`、`--max-files 500000`、`--no-internal`。扫描结果写入 SQLite 快照，不改手机文件。
+默认扫描 `/sdcard`；Root 下会追加 `/data/data/*/cache`。常用参数：`--roots /sdcard/Download`、`--max-depth 32`、`--max-files 500000`、`--no-internal`、`--no-media`。扫描结果写入 SQLite 快照，不改手机文件。
+
+v1.4.0 起，`scan` 还会尝试只读查询 Android MediaStore，把媒体索引写入 `scan/aux/`，仅用于交叉验证；`--no-media` 可关闭该采集。
 
 **第 6 步：分析并生成证据**
 
@@ -350,6 +352,61 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 | 空目录 | `--categories empty_dirs`（只用 rmdir） |
 | 只清 SAFE | `--all-safe` |
 
+### 跨轮目录档案与扫描覆盖
+
+v1.3.0 起，`scan` 会顺带更新主机侧目录档案 `.adc-state/history/archive.db`：
+
+```powershell
+# 首轮：建立目录基线
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+
+# 之后每轮 scan 会生成 directory-diff.json
+python "$Skill\scripts\adc.py" archive diff --state $State
+python "$Skill\scripts\adc.py" archive stats --state $State
+```
+
+`archive diff` 会列出新增、增长、缩小、本轮未再出现、删后复活、疑似卸载残留和未审查目录。`archive mark` 只写 `keep/watch/neutral` 备注：
+
+```powershell
+python "$Skill\scripts\adc.py" archive mark --state $State `
+  --path /sdcard/DCIM/Camera --decision keep --note "用户相片目录"
+```
+
+这些标记只用于分析提示，不改变风险等级，也不构成删除授权。扫描不完整、权限缺口、系统升级或切换用户时，档案会保留待确认状态，不会把未扫描区域判成已删除。`scan` 可用 `--no-archive` 跳过档案更新。
+
+`scan-summary.md` 与 `report-before.md` 会同时给出扫描覆盖状态、逻辑大小、按 `(dev, inode)` 去重后的大小，以及设备已用空间与文件扫描之间的差额说明。差额包含应用内部数据、系统数据、未扫描区域和文件系统开销，不能当作可回收空间。
+
+### MediaStore 媒体索引（辅助数据源）
+
+v1.4.0 起，`scan` 会通过 `content query` 只读查询 `images`、`video`、`audio`、`downloads` 四个媒体集合：
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-media
+```
+
+输出只写主机状态目录：
+
+- `scan/aux/sources.json`：采集状态、集合、字段投影、限制。
+- `scan/aux/media-index.jsonl`：去重后的媒体索引条目。
+
+`analyze` 会把媒体索引与文件快照逐路径核对，在 `report-before.md` 增加「媒体索引核对（第二数据源）」区块，并写入 `analysis-summary.json` 的 `summary.media_index`：
+
+- 索引与扫描都有且大小一致：`matched`。
+- 索引有、扫描无：区分“本轮扫描范围内”和“范围外”；**不能认定文件已删除**。
+- 扫描有、索引无：可能是隐藏目录、未索引或应用私有媒体，**不代表异常**。
+- 大小不一致：索引可能过期，以文件系统为准。
+- `trashed` / `pending`：只提示索引状态，不改变风险。
+
+媒体索引只作为证据，不生成候选、不改变风险等级、不改变可选择性，也不计入文件扫描合计。清理仍需 `plan → select → token → execute`。
+
+权限与兼容性：
+
+- ADB shell / Shizuku 通路尝试以 shell UID 查询，不需要 Root；`local`（Termux）通常没有媒体权限，会降级为不可用。
+- HarmonyOS NEXT 没有 Android MediaStore，状态标记为 `unsupported`，不执行查询；HarmonyOS 1.x–4.x 兼容版可尝试同一通道，但仍需真机验证。
+- 多用户、工作资料、部分 SD 卡卷、隐藏目录和索引延迟都可能造成差异，报告会明确列为限制。
+- 已在 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）完成只读真机验证：4,965 条媒体索引 / 7.35 GB，4,964 条与文件扫描匹配，8 条仅大小写不同，1 条在扫描范围外，0 条范围内缺失；该 ROM 的 `downloads` 集合不可用。更多 OEM/Android 版本仍需验证。
+
 ### 命令总表
 
 | 命令 | 用途 | 修改设备 |
@@ -366,8 +423,9 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 | `quarantine purge` | 永久删除隔离文件，真正释放空间 | 是 |
 | `restore` | 从隔离区恢复文件 | 是 |
 | `recheck` | 重新扫描并与上一轮对比 | 否（写新快照） |
+| `archive diff/stats/mark` | 查看跨轮目录变化、写分析标记 | 否（只写主机状态目录） |
 | `export` | 导出候选、文件清单与执行结果 CSV | 否 |
-| `history` | 查看历史扫描快照 | 否 |
+| `history` | 查看历史扫描快照与目录档案统计 | 否 |
 
 退出码：
 
@@ -388,6 +446,7 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 - 不得把 DANGEROUS 项加入选择，不得下调风险等级。
 - 未经用户明确同意，不得运行 `execute`、`quarantine purge`、`restore`。
 - 不得删除系统目录、应用数据库与账号数据、已安装应用的 OBB、聊天记录与聊天媒体、个人照片视频原片、未知用途文件。
+- 目录档案、跨轮变化和 `archive mark` 只是分析证据，不得据此直接生成候选或授权删除。
 - 不得跟随符号链接；不得清空整个目录；只处理候选清单中的具体路径。
 - 执行前由 CLI 重新校验大小、mtime、inode，有变化就跳过并报告。
 - 多设备必须指定 `--serial`；执行前校验当前设备身份与计划一致。
@@ -420,6 +479,11 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
   },
   "safety": {
     "generic_cache_risk": "caution"
+  },
+  "archive": {
+    "min_dir_bytes": 10485760,
+    "grow_bytes": 52428800,
+    "grow_percent": 20
   }
 }
 ```
@@ -438,6 +502,13 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 | `media_old_days` | 730 | 旧媒体阈值 |
 | `download_old_days` | 30 | 旧下载阈值 |
 | `safety.generic_cache_risk` | `caution` | 通用缓存风险策略；设为 `safe` 可恢复旧行为 |
+| `archive.min_dir_bytes` | 10485760 | 纳入目录档案的最小目录大小（10 MiB） |
+| `archive.grow_bytes` | 52428800 | 判定“显著增长”的最小增量（50 MiB） |
+| `archive.grow_percent` | 20 | 判定“显著增长”的最小百分比 |
+| `media_store.enabled` | `true` | 是否采集 MediaStore 辅助索引 |
+| `media_store.collections` | 四个集合 | `images/video/audio/downloads` |
+| `media_store.timeout_seconds` | 60 | 单个集合查询超时 |
+| `media_store.max_items` | 200000 | 媒体索引条数上限，超限标记截断 |
 
 ## 项目结构
 
@@ -446,9 +517,9 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 ├── android-deep-clean/          # Skill 本体
 │   ├── SKILL.md                 # Agent 读取的技能说明
 │   ├── scripts/
-│   │   ├── adc.py               # CLI 入口，14 个子命令
+│   │   ├── adc.py               # CLI 入口，15 个子命令
 │   │   ├── install_skill.ps1    # 备份、复制、校验、失败回滚
-│   │   └── adc_lib/             # 传输、扫描、分析、计划、执行、报告
+│   │   └── adc_lib/             # 传输、扫描、目录档案、MediaStore、空间对账、分析、计划、执行、报告
 │   └── references/              # 安全策略、路径规则、复核指南、USB/ADB、鸿蒙等
 ├── tests/                       # pytest 用例与 mock 夹具（不需要手机）
 ├── docs/                        # 安装、CLI 契约、鸿蒙支持、真机验收、测试报告
@@ -464,7 +535,7 @@ HarmonyOS 1.x–4.x 兼容版保留 Android 运行时，继续走上面的 ADB �
 python -m pytest tests -q
 ```
 
-2026-11-06 / v1.2.8 实测：195 passed, 1 skipped（196 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.4.0 实测：222 passed, 1 skipped（223 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。MediaStore 已有 11 个自动化测试，并在 1 台真机完成只读验证。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -508,7 +579,11 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；异常时间戳（早于 2000 年或晚于当前 24 小时）不参与候选筛选。
 - 不覆盖系统级清理（系统缓存分区、OTA 等），不保证所有 ROM 的 `pm`/`find` 行为一致。
 - 隔离与恢复依赖本机状态目录；状态目录丢失后无法自动恢复。
-- HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，`bm clean` 未接入执行器。
+- 目录档案按路径识别，重命名会显示为“未再出现 + 新增”；扫描不完整或环境变化时不做消失判断。
+- 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
+- 目录档案与覆盖率改动尚未完成真机验收。
+- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。
+- HarmonyOS NEXT 只能处理公共目录与媒体库，不能按文件扫描应用私有缓存，也不使用 Android MediaStore；`bm clean` 未接入执行器。
 - 手机端 Termux / Shizuku 通路尚未完成真机验收。
 
 真机验证进度：
@@ -516,6 +591,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 | 项目 | 状态 |
 |---|---|
 | 真实设备只读（local + ADB） | 1 台通过：HONOR HLK-AL00，HarmonyOS 3.0 兼容版 / Android 10 |
+| MediaStore 只读索引 | 1 台通过：HONOR HLK-AL00；图片/视频/音频可用，`downloads` 在该 ROM 不可用；4,965 条索引中 4,964 条匹配，范围内缺失 0 条 |
 | 隔离 / 验证 / 恢复 | 1 台通过，仅自建测试文件 |
 | 用户真实数据清理 | 0 台完成验收 |
 | 永久删除（purge） | 真机未验证 |

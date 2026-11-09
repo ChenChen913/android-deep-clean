@@ -16,7 +16,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from .archive import DirectoryArchive
+from .media_index import MediaIndex
 from .models import CandidateFile, PackageIndex
+from .reconcile import build_storage_accounting
 from .reports import analysis_markdown
 from .rules import (
     APK_EXTS,
@@ -47,6 +50,7 @@ from .util import (
     human_bytes,
     now_iso,
     parse_age_days,
+    read_json,
     sha256_file,
     sha256_text,
     stable_id,
@@ -146,6 +150,24 @@ class Analyzer:
             or (scan_meta.get("capabilities") or {}).get("platform")
             or "android"
         )
+        self.directory_diff: dict[str, Any] = read_json(
+            self.state.dir("scan") / "directory-diff.json", default={}
+        ) or {}
+        self._diff_maps: dict[str, dict[str, dict[str, Any]]] = {}
+        for key in ("new", "grew", "shrunk", "resurrected", "app_updated", "orphan_suspect"):
+            items = self.directory_diff.get(key) if isinstance(self.directory_diff, dict) else []
+            self._diff_maps[key] = {
+                str(item.get("path")): item for item in (items or []) if item.get("path")
+            }
+        self._archive_rows: dict[str, dict[str, Any]] = {}
+        archive_path = self.state.root / "history" / "archive.db"
+        if archive_path.exists():
+            try:
+                archive = DirectoryArchive(archive_path)
+                self._archive_rows = archive.rows()
+                archive.close()
+            except Exception:  # noqa: BLE001 - archive must never break analysis
+                self._archive_rows = {}
         scan_db = state.require("scan")
         self.out_dir = state.dir("analysis")
         self.db_path = self.out_dir / "analysis.db"
@@ -161,6 +183,9 @@ class Analyzer:
             "INSERT OR REPLACE INTO meta(key,value) VALUES ('scan_meta',?)",
             (json.dumps(scan_meta, ensure_ascii=False),),
         )
+        self.media_index = MediaIndex(self.state, self.scan_conn, self.scan_meta, self.config)
+        self.media_index.load()
+        self.media_index.ingest(self.db)
 
     # ------------------------------------------------------------- db helpers
     def _rows(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -215,6 +240,71 @@ class Analyzer:
             kind=str(value("kind", "file") or "file"),
             role=role,
         )
+
+    def _history_evidence(self, path: str) -> list[dict[str, str]]:
+        """Cross-round facts from the directory archive.
+
+        These are evidence strings only.  They never change risk, selectability
+        or the candidate's file manifest.
+        """
+        evidence: list[dict[str, str]] = []
+        record = self._archive_rows.get(path)
+        if record:
+            first_seen = str(record.get("first_seen_at") or "")
+            last_seen = str(record.get("last_seen_at") or "")
+            parts = ["跨轮档案"]
+            if first_seen:
+                parts.append(f"首次记录 {first_seen}")
+            if last_seen:
+                parts.append(f"最近记录 {last_seen}")
+            if int(record.get("absent_rounds") or 0) > 0:
+                parts.append(f"连续 {int(record['absent_rounds'])} 轮未再出现")
+            if int(record.get("resurrect_count") or 0) > 0:
+                parts.append(f"曾消失后重新出现 {int(record['resurrect_count'])} 次")
+            if record.get("app_version"):
+                parts.append(f"应用版本 {record['app_version']}")
+            if record.get("decision"):
+                note = f"（{record['note']}）" if record.get("note") else ""
+                parts.append(f"档案标记 {record['decision']}{note}")
+            evidence.append({"code": "history", "text": "；".join(parts)})
+
+        grew = self._diff_maps.get("grew", {}).get(path)
+        if grew:
+            evidence.append({
+                "code": "history_grew",
+                "text": f"跨轮变化：本轮较上轮增长 {human_bytes(int(grew.get('delta_bytes') or 0))}"
+                        f"（{grew.get('delta_percent', 0)}%）",
+            })
+        shrunk = self._diff_maps.get("shrunk", {}).get(path)
+        if shrunk:
+            evidence.append({
+                "code": "history_shrunk",
+                "text": f"跨轮变化：本轮较上轮缩小 {human_bytes(abs(int(shrunk.get('delta_bytes') or 0)))}",
+            })
+        if path in self._diff_maps.get("new", {}):
+            evidence.append({"code": "history_new", "text": "跨轮变化：上轮扫描未记录该目录"})
+        resurrected = self._diff_maps.get("resurrected", {}).get(path)
+        if resurrected:
+            evidence.append({
+                "code": "history_resurrected",
+                "text": f"跨轮变化：该目录曾在扫描中消失，本轮重新出现"
+                        f"（累计 {int(resurrected.get('resurrect_count') or 1)} 次）",
+            })
+        updated = self._diff_maps.get("app_updated", {}).get(path)
+        if updated:
+            evidence.append({
+                "code": "history_app_updated",
+                "text": f"应用版本从 {updated.get('previous_version') or '-'} 变为 "
+                        f"{updated.get('version') or '-'}；增长可能来自应用更新",
+            })
+        orphan = self._diff_maps.get("orphan_suspect", {}).get(path)
+        if orphan:
+            evidence.append({
+                "code": "history_orphan",
+                "text": f"跨轮残留线索：{orphan.get('reason') or '应用可能已卸载'}，"
+                        f"置信度 {orphan.get('confidence') or '-'}",
+            })
+        return evidence
 
     # ------------------------------------------------------------ candidate add
     def _add_candidate(
@@ -287,6 +377,8 @@ class Analyzer:
             elif entry.get("code") == "size":
                 entry["text"] = f"逻辑大小 {human_bytes(total_bytes)}"
             checked_evidence.append(entry)
+        checked_evidence.extend(self.media_index.evidence(final_files, category))
+        checked_evidence.extend(self._history_evidence(primary_path))
         sample_paths = [item.path for item in delete_files[: self.sample_limit]] or [
             item.path for item in final_files if item.kind == "dir"
         ][: self.sample_limit] or [primary_path]
@@ -1108,6 +1200,11 @@ class Analyzer:
         if self.limit_reached:
             self.limitations.append(f"候选组达到上限 {self.max_candidates}，部分内容未列出。")
         summary = self._summary()
+        summary["media_index"] = self.media_index.summary()
+        summary["storage"] = build_storage_accounting(self.scan_meta, self.config)
+        self.media_index.attach_storage(summary["storage"])
+        summary["coverage"] = self.scan_meta.get("coverage") or {}
+        summary["directory_changes"] = self.directory_diff
         items = self._items()
         review_template = {
             "schema": 1,
@@ -1134,6 +1231,10 @@ class Analyzer:
             "platform": self.platform,
             "hash_mode": self.hash_mode,
             "summary": summary,
+            "storage": summary["storage"],
+            "coverage": summary["coverage"],
+            "media_index": summary["media_index"],
+            "directory_changes": summary["directory_changes"],
             "items": items,
             "limitations": self.limitations,
             "review_items": self.review_items,

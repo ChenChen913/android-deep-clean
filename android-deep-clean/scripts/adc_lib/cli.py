@@ -16,6 +16,7 @@ from typing import Any
 
 from . import __version__
 from .analyzer import Analyzer
+from .archive import DirectoryArchive, VALID_DECISIONS
 from .config import load_config
 from .device import Doctor, doctor_markdown
 from .executor import Executor, load_execution, purge as purge_execution, restore as restore_execution, verify as verify_execution
@@ -24,7 +25,7 @@ from .models import PackageIndex
 from .planner import load_analysis, run_plan, run_select
 from .reports import recheck_markdown
 from .rules import category_title
-from .scanner import Scanner, load_packages, load_snapshot
+from .scanner import Scanner, _media_status_label, load_packages, load_snapshot, scan_markdown
 from .state import State
 from .transport import AdbTransport, Transport, create_transport
 from .util import (
@@ -33,6 +34,7 @@ from .util import (
     TransportError,
     UsageError,
     ValidationError,
+    atomic_write_json,
     human_bytes,
     md_code,
     now_iso,
@@ -112,6 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-depth", dest="max_depth", type=int, default=None)
     p.add_argument("--max-files", dest="max_files", type=int, default=None)
     p.add_argument("--no-internal", dest="no_internal", action="store_true", help="不扫描 /data/data 下的应用 cache")
+    p.add_argument("--no-archive", dest="no_archive", action="store_true", help="不更新跨轮目录档案")
+    p.add_argument("--no-media", dest="no_media", action="store_true", help="不采集 MediaStore 媒体索引")
 
     p = sub.add_parser("analyze", help="基于快照生成候选、证据、风险与清理前报告")
     add_common(p)
@@ -162,6 +166,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("recheck", help="清理复查：重新扫描、生成新分析并与上一轮对比")
     add_common(p)
+    p.add_argument("--no-archive", dest="no_archive", action="store_true", help="不更新跨轮目录档案")
+    p.add_argument("--no-media", dest="no_media", action="store_true", help="不采集 MediaStore 媒体索引")
+
+    p = sub.add_parser("archive", help="跨轮目录档案：查看变化、标记目录")
+    asub = p.add_subparsers(dest="archive_action", required=True)
+    diff = asub.add_parser("diff", help="读取本轮目录差分")
+    add_common(diff)
+    stats = asub.add_parser("stats", help="查看目录档案统计")
+    add_common(stats)
+    mark = asub.add_parser("mark", help="给目录写 keep/watch/neutral 标记")
+    add_common(mark)
+    mark.add_argument("--path", required=True, help="目录路径")
+    mark.add_argument("--decision", choices=sorted(VALID_DECISIONS), required=True)
+    mark.add_argument("--note", default="", help="一句话备注")
 
     return parser
 
@@ -219,6 +237,34 @@ def _print_human(lines: list[str]) -> None:
 
 def _safe_error(message: str) -> None:
     print(f"ADC_ERROR: {message}", file=sys.stderr)
+
+
+def _update_archive(
+    scan_state: State,
+    archive_state: State,
+    meta: dict[str, Any],
+    packages: PackageIndex | None,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if not (config.get("archive") or {}).get("enabled", True):
+        return {}
+    archive = DirectoryArchive(archive_state.root / "history" / "archive.db")
+    try:
+        diff = archive.update(scan_state.get_file("scan"), meta, packages, config)
+    finally:
+        archive.close()
+    (scan_state.dir("scan") / "scan-summary.md").write_text(
+        scan_markdown(meta, diff), encoding="utf-8"
+    )
+    meta["directory_diff_path"] = str(scan_state.dir("scan") / "directory-diff.json")
+    meta["directory_diff_summary"] = diff.get("summary") or {}
+    meta["archive"] = {
+        "env_id": diff.get("env_id", ""),
+        "baseline": bool(diff.get("baseline")),
+        "environment_changed": bool(diff.get("environment_changed")),
+    }
+    atomic_write_json(scan_state.file("scan", "snapshot-meta.json"), meta)
+    return diff
 
 
 def cmd_devices(args: Any, config: dict[str, Any]) -> int:
@@ -304,8 +350,17 @@ def cmd_history(args: Any, config: dict[str, Any]) -> int:
                 "device_identity": meta.get("device_identity", {}),
                 "archived_dir": str(directory),
             })
+    archive_info: dict[str, Any] = {}
+    archive_path = state.root / "history" / "archive.db"
+    if archive_path.exists():
+        archive = DirectoryArchive(archive_path)
+        try:
+            archive_info = archive.stats()
+        finally:
+            archive.close()
     if args.json:
-        print(json.dumps({"state": str(state.root), "scans": entries}, ensure_ascii=False, indent=2))
+        print(json.dumps({"state": str(state.root), "scans": entries, "archive": archive_info},
+                         ensure_ascii=False, indent=2))
     else:
         if not entries:
             print("暂无扫描历史。先运行 scan。")
@@ -315,6 +370,9 @@ def cmd_history(args: Any, config: dict[str, Any]) -> int:
                 stats = entry.get("stats") or {}
                 print(f"- {entry.get('scanned_at') or '-'}  {entry.get('kind')}  "
                       f"{stats.get('files', 0)} 文件 / {human_bytes(stats.get('bytes', 0))}  {entry.get('path')}")
+        if archive_info and archive_info.get("directories"):
+            print(f"- 目录档案：{archive_info.get('directories')} 个目录 / "
+                  f"{archive_info.get('tracked_human')} / 未审查 {archive_info.get('unreviewed')}")
     return 0
 
 
@@ -341,7 +399,14 @@ def cmd_scan(args: Any, config: dict[str, Any]) -> int:
         max_files=args.max_files,
         include_internal=not args.no_internal,
         progress=not args.quiet,
+        collect_media_store=not getattr(args, "no_media", False),
     )
+    diff: dict[str, Any] = {}
+    if not getattr(args, "no_archive", False):
+        try:
+            diff = _update_archive(state, state, meta, scanner.packages, config)
+        except Exception as exc:  # noqa: BLE001 - archive must not break a successful scan
+            print(f"ADC_WARN: 目录档案更新失败：{exc}", file=sys.stderr)
     if args.json:
         print(json.dumps(meta, ensure_ascii=False, indent=2))
     else:
@@ -350,9 +415,26 @@ def cmd_scan(args: Any, config: dict[str, Any]) -> int:
         print(f"- 快照：{state.get_file('scan')}")
         print(f"- 摘要：{state.get_file('scan_meta')}")
         stats = meta.get("stats") or {}
+        coverage = meta.get("coverage") or {}
         print(f"- 条目 {stats.get('entries', 0)}，文件 {stats.get('files', 0)}，逻辑大小 {human_bytes(stats.get('bytes', 0))}")
+        print(f"- 去重后大小 {human_bytes(coverage.get('unique_bytes', stats.get('bytes', 0)))}，覆盖率 {coverage.get('status', 'unknown')}")
         if meta.get("truncated"):
             print("- ⚠ 扫描被截断，结果不完整；请查看扫描摘要中的限制。")
+        if coverage.get("reasons"):
+            for reason in coverage["reasons"][:3]:
+                print(f"- 限制：{reason}")
+        media = (meta.get("aux") or {}).get("media_store") or {}
+        if media:
+            print(f"- 媒体索引：{_media_status_label(str(media.get('status') or 'unknown'))}，"
+                  f"条目 {media.get('items', 0)} / {human_bytes(media.get('bytes', 0))}")
+        if diff:
+            summary = diff.get("summary") or {}
+            if diff.get("baseline"):
+                print("- 目录档案：已建立首轮基线。")
+            else:
+                print(f"- 目录变化：新增 {summary.get('new', 0)}，增长 {summary.get('grew', 0)}，"
+                      f"复活 {summary.get('resurrected', 0)}，疑似残留 {summary.get('orphan_suspect', 0)}")
+            print(f"- 目录差分：{meta.get('directory_diff_path')}")
         print("\n下一步：analyze --state " + args.state)
     return 0
 
@@ -576,9 +658,16 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
         "android": previous_meta.get("android", ""),
         "capabilities": previous_meta.get("capabilities") or {},
         "limitations": previous_meta.get("limitations") or [],
+        "storage": previous_meta.get("storage") or [],
     }
     scanner = Scanner(transport, config, new_state, doctor)
-    meta = scanner.scan(progress=not args.quiet)
+    meta = scanner.scan(progress=not args.quiet, collect_media_store=not getattr(args, "no_media", False))
+    diff: dict[str, Any] = {}
+    if not getattr(args, "no_archive", False):
+        try:
+            diff = _update_archive(new_state, state, meta, scanner.packages, config)
+        except Exception as exc:  # noqa: BLE001 - archive must not break a successful recheck
+            print(f"ADC_WARN: 目录档案更新失败：{exc}", file=sys.stderr)
     conn, scan_meta = load_snapshot(new_state)
     packages = load_packages(conn)
     analyzer = Analyzer(transport, config, new_state, conn, scan_meta, packages, hash_mode=str(config["scan"].get("hash_mode") or "device"))
@@ -605,7 +694,11 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
             "new_count": len(new_items),
             "remaining_count": len(remaining),
             "vanished_count": len(vanished),
+            "directory_new": (diff.get("summary") or {}).get("new", 0),
+            "directory_grew": (diff.get("summary") or {}).get("grew", 0),
+            "directory_resurrected": (diff.get("summary") or {}).get("resurrected", 0),
         },
+        "directory_changes": diff,
         "new_items": new_items[:200],
         "remaining_items": remaining[:200],
         "vanished_items": vanished[:200],
@@ -623,8 +716,51 @@ def cmd_recheck(args: Any, config: dict[str, Any]) -> int:
     else:
         print("清理复查完成（未删除任何内容）")
         print(f"- 新增候选：{len(new_items)}；仍存在：{len(remaining)}；已消失：{len(vanished)}")
+        if diff:
+            archive_summary = diff.get("summary") or {}
+            print(f"- 目录新增 {archive_summary.get('new', 0)}；增长 {archive_summary.get('grew', 0)}；"
+                  f"复活 {archive_summary.get('resurrected', 0)}；疑似残留 {archive_summary.get('orphan_suspect', 0)}")
         print(f"- 新分析报告：{new_state.get_file('report_before')}")
         print(f"- 复查报告：{out_dir / 'report-recheck.md'}")
+    return 0
+
+
+def cmd_archive(args: Any, config: dict[str, Any]) -> int:
+    state = _state(args)
+    archive = DirectoryArchive(state.root / "history" / "archive.db")
+    try:
+        action = args.archive_action
+        if action == "diff":
+            data = archive.latest_diff(state.root)
+        elif action == "stats":
+            data = archive.stats()
+        elif action == "mark":
+            data = archive.mark(args.path, args.decision, args.note)
+        else:
+            raise UsageError(f"未知 archive 子命令：{action}")
+    finally:
+        archive.close()
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    elif action == "diff":
+        summary = data.get("summary") or {}
+        if data.get("baseline"):
+            print("本轮为首轮基线，暂无跨轮变化。")
+        else:
+            print(f"新增 {summary.get('new', 0)}；增长 {summary.get('grew', 0)}；"
+                  f"缩小 {summary.get('shrunk', 0)}；未再出现 {summary.get('vanished', 0)}；"
+                  f"复活 {summary.get('resurrected', 0)}；疑似残留 {summary.get('orphan_suspect', 0)}")
+        if data.get("diff_path"):
+            print(f"- 差分文件：{data.get('diff_path')}")
+    elif action == "stats":
+        print(f"- 档案：{data.get('archive_path')}")
+        print(f"- 目录 {data.get('directories', 0)} 个，跟踪大小 {data.get('tracked_human')}，"
+              f"已标记 {data.get('reviewed', 0)}，未审查 {data.get('unreviewed', 0)}")
+    else:
+        print(f"- 已标记 {data.get('path')} -> {data.get('decision')}")
+        if data.get("note"):
+            print(f"- 备注：{data.get('note')}")
+        print("> 标记只用于分析提示，不是删除授权。")
     return 0
 
 
@@ -660,6 +796,8 @@ def dispatch(args: Any) -> int:
         return cmd_restore(args, config)
     if args.command == "recheck":
         return cmd_recheck(args, config)
+    if args.command == "archive":
+        return cmd_archive(args, config)
     raise UsageError(f"未知命令：{args.command}")
 
 

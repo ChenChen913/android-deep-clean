@@ -66,7 +66,7 @@ python scripts/adc.py analyze --state .adc-state --transport adb --serial <序�
 python scripts/adc.py execute --state .adc-state --transport adb --serial <序列号> --token <TOKEN> --backup-to D:\phone-backup
 ~~~
 
-其余命令（plan/select/inspect/verify/restore/purge/recheck/export/history）完全一致，只换 --transport/--serial。
+其余命令（plan/select/inspect/verify/restore/purge/recheck/archive/export/history）完全一致，只换 --transport/--serial。
 
 ## 4. 能力边界
 

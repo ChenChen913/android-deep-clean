@@ -84,10 +84,11 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb
 python "$Skill\scripts\adc.py" recheck --state $State --transport adb
 ~~~
 
-1. 读 report-recheck.md：新增/仍存在/已消失；
+1. 读 report-recheck.md：新增/仍存在/已消失，以及跨轮目录变化；
 2. 对新增候选重新 analyze/review/plan/select/execute；
 3. 旧令牌不得复用；
-4. 说明“复查也是只读，不会自动删除”。
+4. 说明“复查也是只读，不会自动删除”；
+5. 目录变化只作线索，不据此跳过 review 或生成选择令牌。
 
 ## 状态机与失败恢复
 

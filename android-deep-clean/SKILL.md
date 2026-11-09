@@ -30,6 +30,8 @@ description: 面向 Android 与华为 HarmonyOS 手机的 AI 深度垃圾清理 
 
 - 禁止绕过本 Skill 的 CLI 直接执行 rm、rm -rf、mv、find -delete、pm clear 等删除命令。
 - 禁止把 DANGEROUS 项加入选择；禁止降低风险等级。
+- 目录档案、跨轮变化、`archive mark` 和 MediaStore 媒体索引只能作为分析证据，不能生成候选、不能改变风险等级、不能当作删除授权。
+- 扫描不完整、权限缺口、设备/用户/系统环境变化时，不得把未再出现的目录判定为已删除。
 - 禁止未经用户明确同意运行 execute / quarantine purge / restore。
 - 禁止删除：Android 系统目录、应用数据库/配置/账号数据、OBB（已安装应用）、聊天记录与聊天媒体、个人照片视频原片、未知用途文件。
 - 禁止删除符号链接指向的目标；禁止跟随符号链接扫描或删除。
@@ -115,7 +117,21 @@ python "$Skill\scripts\adc.py" doctor --state $State --transport adb
 python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序列号>
 ~~~
 
-默认扫描 /sdcard；Root 下会自动追加 /data/data/*/cache。可选参数：--roots、--max-depth、--max-files、--no-internal。大数据量时可接受截断，但必须在报告里说明。
+默认扫描 /sdcard；Root 下会自动追加 /data/data/*/cache。可选参数：--roots、--max-depth、--max-files、--no-internal、--no-media。大数据量时可接受截断，但必须在报告里说明。
+
+扫描会同时生成目录统计与覆盖率：每个目录的直接/子树大小、文件数、最新 mtime，逻辑大小与按 `(dev, inode)` 去重后的大小，以及每个根目录的扫描状态和跳过路径。默认还会更新主机侧目录档案 `.adc-state/history/archive.db`；可用 `--no-archive` 跳过。
+
+v1.4.0 起，scan 默认尝试只读查询 Android MediaStore（images/video/audio/downloads），结果写到主机侧 `scan/aux/sources.json` 与 `scan/aux/media-index.jsonl`。该索引只用于与文件扫描交叉验证；`--no-media` 可关闭。HarmonyOS NEXT 不使用 Android MediaStore，状态为 `unsupported`；ADB shell/Shizuku 不需要 Root，Termux local 通常无媒体权限并会降级。
+
+跨轮档案：
+
+~~~powershell
+python "$Skill\scripts\adc.py" archive diff --state $State
+python "$Skill\scripts\adc.py" archive stats --state $State
+python "$Skill\scripts\adc.py" archive mark --state $State --path /sdcard/DCIM/Camera --decision keep --note "用户相片目录"
+~~~
+
+首轮是基线，后续显示新增、增长、缩小、本轮未再出现、删后复活、疑似卸载残留和未审查目录。扫描不完整、权限缺口、系统升级或切换用户时不做消失判断。`archive mark` 只有 keep/watch/neutral，且只是分析证据，不改变风险、不生成候选、不授权删除。详细规则见 references/directory-archive.md。
 
 ### 3. Analyze：候选 + 证据 + 报告
 
@@ -125,9 +141,10 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <
 ~~~
 
 生成：
-- report-before.md：人类可读的清理前报告（分类、数量、大小、路径示例、理由、风险、建议）。
-- analysis-summary.json：AI 优先读这个（比完整 analysis.json 小）。
+- report-before.md：人类可读的清理前报告（分类、数量、大小、路径示例、理由、风险、建议），并包含「存储空间与扫描覆盖」「媒体索引核对」「跨轮目录变化」区块。
+- analysis-summary.json：AI 优先读这个（比完整 analysis.json 小），包含 `storage`、`coverage`、`media_index`、`directory_changes`。
 - review-template.json：需要复核的候选模板。
+- 候选证据会附带媒体索引（MIME/尺寸/时长/trashed/pending）、跨轮档案、增长/缩小、删后复活、应用版本变化等线索；这些都只是证据，不改变风险等级。
 
 然后**由 AI 做深度复核**（见下一节），把结论写成 review.json。不要跳过复核直接让用户选 CAUTION。
 
@@ -334,7 +351,8 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 - 隔离不会释放空间；执行报告中的「空间账目」会分别列出已隔离、未处理、已实际释放与隔离区占用，purge 后才真正释放。
 - 真实 Android / HarmonyOS 设备尚未完成端到端验收；发布门槛见项目 docs/real-device-test-plan.md，未满足前不得宣称正式可用。
 - local 通路在 proot/容器中不会被误判为 Android Root；容器里能读 Android/data 也不代表 scoped storage 下普通应用可读。
-- HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；`bm clean` 未接入执行器。
+- HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；不使用 Android MediaStore；`bm clean` 未接入执行器。
+- MediaStore 媒体索引依赖 `content query`，可用性受 shell 权限、OEM、Android 版本影响；已在 1 台 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）完成只读验证，该 ROM 的 `downloads` 集合不可用，更多机型仍需验收。索引延迟、多用户、工作资料、隐藏目录、部分 SD 卡卷和路径大小写差异会造成核对差异；索引缺失或差异不得作为删除依据。
 - HarmonyOS NEXT/兼容版的 hdc/adb 真机行为尚未验证；mock 通过不等于真机通过。
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；不能把“未访问”当唯一证据。
 - 无法识别所有应用私有格式/加密缓存；未知内容一律保留。

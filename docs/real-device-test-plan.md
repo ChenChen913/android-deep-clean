@@ -35,6 +35,17 @@
 
 测试文件建议：`/sdcard/Download/adc-test-<日期>.bin`（Android）或公共目录 `Docs/Download/...`（NEXT）。不要用唯一照片、聊天记录、数据库或工作文件做测试。
 
+## 2.1 跨轮目录档案专项检查
+
+| 项目 | 检查方式 | 当前状态 |
+|---|---|---|
+| 首轮基线 | 首次 `scan` 后 `archive stats` 有目录数；`directory-diff.json` 标记 baseline | 未验证 |
+| 新增/增长 | 在测试目录增加文件后再次 `scan`，`archive diff` 应列出变化 | 未验证 |
+| 消失与复活 | 删除自建测试目录后 `scan`，再重建后 `scan`，应分别出现“未再出现/复活” | 未验证 |
+| 扫描不完整不误判 | 让 Android/data 不可读后 `scan`，消失类变化应为空并写明限制 | 未验证 |
+| 环境变化 | 系统升级/切换用户后 `scan`，应重建基线而不是把全部目录标成新增 | 未验证 |
+| 标记不授权删除 | `archive mark keep` 后候选仍按原风险、仍不能绕过 review/令牌 | 未验证 |
+
 ## 3. HarmonyOS 专项检查
 
 | 项目 | 检查方式 | 当前状态 |
@@ -58,7 +69,8 @@
 
 ## 5. 当前结论
 
-- 代码、Mock 与 CI：通过。
+- 代码与本地 Mock：通过（v1.3.0，211 passed / 1 skipped）。
+- v1.3.0 的目录档案/覆盖率改动尚未推送运行 CI；新增能力未做真机验证。
 - 真实设备只读链路：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）已通过 doctor、scan、analyze、inspect；local 与 USB+ADB 两条通路均验证，ADB 全盘扫描 125,855 条目 / 117,007 文件。
 - 真实设备清理/恢复：隔离与恢复机制已在 1 台设备用自建测试文件演练通过（3 个文件，SHA-256 与 mtime 一致，隔离区残留 0）；**未对用户真实数据执行 execute/purge/restore，正式验收 0 台**。
 - 真实 HarmonyOS NEXT：**0 台完成验收**。

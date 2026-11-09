@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .models import AccessProbe, DeviceInfo, PackageIndex
@@ -117,6 +118,20 @@ class Doctor:
                 result[command] = False
         return result
 
+    def _android_user(self, commands: dict[str, bool]) -> str:
+        mock_caps = getattr(self.transport, "caps", {}) if self.transport.name == "mock" else {}
+        if isinstance(mock_caps, dict) and mock_caps.get("android_user") is not None:
+            return str(mock_caps.get("android_user"))
+        if not commands.get("am"):
+            return ""
+        try:
+            rc, out, _ = self.transport.shell_rc("am get-current-user", timeout=20)
+        except TransportError:
+            return ""
+        value = (out or "").strip().splitlines()[0].strip() if (out or "").strip() else ""
+        match = re.search(r"\b(\d+)\b", value)
+        return match.group(1) if rc == 0 and match else ""
+
     def _harmony_photo_roots(self) -> list[str]:
         """Discover media-library roots per numeric user uid.
 
@@ -154,6 +169,7 @@ class Doctor:
         profile = profile_for(platform)
         identity = device_identity(device)
         commands = self._probe_commands(profile.command_probes)
+        android_user = self._android_user(commands)
         packages = self.transport.list_packages()
         probe_paths = list(profile.probe_paths)
         harmony_photo_roots: list[str] = []
@@ -216,6 +232,7 @@ class Doctor:
                 "android_obb_read": False,
                 "internal_data_read": False,
                 "package_manager": bool(packages.available and commands.get("bm")),
+                "android_user": android_user,
                 "hashing": hash_ok,
                 "quarantine_usable": can_write_public,
                 "public_read": public,
@@ -303,6 +320,7 @@ class Doctor:
                 "android_obb_read": android_obb,
                 "internal_data_read": internal,
                 "package_manager": pm_ok,
+                "android_user": android_user,
                 "hashing": hash_ok,
                 "quarantine_usable": can_quarantine,
                 "commands": commands,
@@ -357,6 +375,7 @@ def doctor_markdown(report: dict[str, Any]) -> str:
         f"- 系统：{report.get('android')}",
         f"- 平台：{report.get('platform_label') or report.get('platform') or '-'}",
         f"- 权限级别：{caps.get('tier_label')}（{caps.get('privilege')}）",
+        f"- 当前用户：{caps.get('android_user') or '-'}",
         f"- 应用包：已安装 {((report.get('packages') or {}).get('installed_count'))}，未安装包记录 {((report.get('packages') or {}).get('uninstalled_count'))}",
         "",
         "## 存储空间",

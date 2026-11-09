@@ -33,6 +33,8 @@
   scan/snapshot-meta.json        统计/限制/包列表摘要
   scan/scan-summary.md
   analysis/analysis.db           候选 + 完整文件清单
+  scan/directory-diff.json       本轮跨轮目录变化
+  history/archive.db             跨轮目录档案（主机侧）
   analysis/analysis.json         完整分析（大）
   analysis/analysis-summary.json AI 优先读（小）
   analysis/review-template.json  复核模板
@@ -69,7 +71,10 @@
     "risk_totals": {"SAFE": {"groups": 3, "files": 10, "bytes": 1000}},
     "categories": [],
     "limitations": [],
-    "review_required": 5
+    "review_required": 5,
+    "storage": {"coverage_status": "good", "file_scan": {}, "unexplained": {}},
+    "coverage": {"status": "good", "reasons": []},
+    "directory_changes": {"baseline": false, "summary": {}, "grew": []}
   },
   "review_items": [
     {"id": "...", "category": "residue", "title": "...", "risk": "CAUTION",

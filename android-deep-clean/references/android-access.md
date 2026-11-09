@@ -83,8 +83,10 @@ doctor 会实际执行并记录：
 ## 8. 媒体与 SAF 说明
 
 - SAF 不能让本 Skill 全盘读取 Android/data 或应用私有缓存；它不是本 Skill 的扫描通道。
-- MediaStore 能列媒体，但无法可靠读出“未被媒体库索引的文件”；本 Skill 用 shell find 扫描共享存储，不依赖 MediaStore。
-- 删除共享媒体后 MediaStore 可能有延迟/幽灵条目；verify 以文件系统 stat 为准，并说明媒体库刷新可能滞后。
+- v1.4.0 起，ADB shell / Shizuku 可用 `content query` 只读读取 MediaStore 的图片/视频/音频/下载索引；它作为文件系统扫描之外的辅助证据，不替换 find，也不授权删除。
+- `downloads` 集合需要 API 29+；`relative_path`/`is_pending` 为 API 29+，`is_trashed` 为 API 30+。字段不支持时降级投影，权限或命令失败时记录为不可用。
+- MediaStore 无法可靠读出“未被媒体库索引的文件”；Termux local 通常无媒体权限。HarmonyOS NEXT 没有 Android MediaStore，不执行该查询。
+- 删除共享媒体后 MediaStore 可能有延迟/幽灵条目；verify 以文件系统 stat 为准，并说明媒体库刷新可能滞后。交叉核对中的“索引有、扫描无”不能作为文件已删除的结论。
 
 ## 9. 真机验证清单
 

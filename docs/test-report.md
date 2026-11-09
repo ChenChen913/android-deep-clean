@@ -1,21 +1,53 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.2.8，2026-11-06）
+## 当前版本摘要（v1.4.0，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证提交 | `3613c3f`（v1.2.8） |
-| 本地 Mock | 195 passed / 1 skipped（196 collected） |
-| CI | 运行 `42186180765`，4/4 作业成功（ubuntu-22.04 / windows-latest × Python 3.9 / 3.13） |
-| 真实设备只读 | 2 条通路通过：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10），local 与 USB+ADB 的 doctor、scan、analyze、inspect 全部成功 |
-| 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功，哈希与 mtime 一致；**仅测试文件，未处理用户真实数据** |
-| 真实设备清理/恢复 | 0 台完成正式验收；未对用户真实文件执行 execute、purge、restore |
+| 验证对象 | 本地工作区 v1.4.0（目录尚未初始化 Git） |
+| 本地 Mock | 222 passed / 1 skipped（223 collected） |
+| CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
+| 新增能力验证 | MediaStore 辅助索引：11 个自动化/mock 用例 + 1 台真机只读验证；目录统计、覆盖率、目录档案仍为自动化/mock |
+| 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB 的 doctor、scan、analyze 全部成功 |
+| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配，8 条仅大小写不同，1 条在扫描范围外，范围内缺失 0 条，匹配率 99.98%；`downloads` 集合在该 ROM 不可用，按部分可用降级 |
+| 真机修复 | `datetaken` 列名错误、部分 ROM 不支持 `media_type`、共享存储路径大小写不一致；均已修复并加测试 |
+| 真实设备隔离/恢复演练 | 1 台通过：自建 3 个测试文件（78 B），execute/verify/restore 全部成功；**仅测试文件，未处理用户真实数据** |
+| 真实设备清理/恢复 | 0 台完成正式验收；本轮未执行 select/execute/purge/restore |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
-| 当前定位 | 只读链路与隔离/恢复机制已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
+| 当前定位 | 只读链路、MediaStore 辅助索引与隔离/恢复机制已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
 
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.4.0 MediaStore 只读辅助索引（2026-11-09）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），Windows + Platform Tools，`--transport adb`，shell 权限（无 root）。测试全程只读，未执行 select/execute/purge/restore。
+
+| 项目 | 结果 |
+|---|---|
+| 自动化测试 | 222 passed / 1 skipped；新增 11 个 MediaStore 用例 |
+| doctor | 通过；293 个已安装包；/sdcard、Android/data、obb 可读；/data/data 不可读 |
+| scan | 通过；25.2 秒；30,524 条目 / 24,141 文件 / 11.83 GB；覆盖率 good；无跳过路径 |
+| MediaStore 集合 | 图片 4,814 条 / 4.40 GB；视频 73 条 / 2.96 GB；音频 78 条 / 0.53 GB；`downloads` 返回 unknown URL，按部分可用降级 |
+| MediaStore 路径 | 4,965 / 4,965 可解析（100%） |
+| 交叉核对 | 匹配 4,964；大小不一致 0；仅大小写不同 8；范围内索引缺失 0；范围外 1（预装音乐）；扫描有索引无 132 条 / 10.47 MB |
+| 真机发现 1 | 日期列名应为 `datetaken`，不是 `date_taken`；修正后完整投影成功 |
+| 真机发现 2 | 该 ROM 不支持 `media_type`；已从投影移除 |
+| 真机发现 3 | MediaStore 返回 `tencent`，文件系统为 `Tencent`；交叉核对改为大小写不敏感，并单独统计 |
+| 安全 | 未改动手机文件；未生成清理计划或令牌；媒体索引只作为证据 |
+
+### v1.3.0 跨轮目录档案与扫描覆盖率（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| 自动化测试 | 211 passed / 1 skipped；新增 16 个目录档案/覆盖率用例 |
+| 扫描目录统计 | `dir_stats` 覆盖直接大小、子树大小、文件数、最新/最旧 mtime；mock 下与 os.walk 结果一致 |
+| 覆盖率 | 根目录状态、跳过路径、截断、深度限制、硬链接去重大小写入 snapshot-meta 与 scan-summary |
+| 目录档案 | 首轮 baseline；新增/增长/缩小/消失/复活/应用版本变化/疑似残留/未审查均有 mock 用例 |
+| 防误判 | 扫描不完整、权限缺口、指纹变化时不标记消失；有对应测试 |
+| 标记边界 | `archive mark` 只写 keep/watch/neutral；有测试确认不新增候选、不改变风险 |
+| 真机 | **未验证**；当前环境没有 adb/hdc/设备 |
 
 ### v1.2.8 异常时间戳不再参与候选（2026-11-06）
 

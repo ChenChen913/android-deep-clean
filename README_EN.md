@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.2.8`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.4.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -348,6 +348,53 @@ Common targeted selections:
 | Empty directories | `--categories empty_dirs` (rmdir only) |
 | SAFE items only | `--all-safe` |
 
+### Cross-round directory archive and scan coverage
+
+Since v1.3.0, `scan` also updates a host-side directory archive at `.adc-state/history/archive.db`:
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+python "$Skill\scripts\adc.py" archive diff --state $State
+python "$Skill\scripts\adc.py" archive stats --state $State
+```
+
+The first scan creates a baseline. Later scans report new, growing, shrinking, missing, resurrected, suspected-orphan and unreviewed directories. `archive mark` only writes a `keep/watch/neutral` note:
+
+```powershell
+python "$Skill\scripts\adc.py" archive mark --state $State `
+  --path /sdcard/DCIM/Camera --decision keep --note "user photos"
+```
+
+Marks are analysis hints only. They never change risk levels or authorize deletion. Incomplete scans, permission gaps and system/user changes suppress "vanished" conclusions. Use `scan --no-archive` to skip the archive update.
+
+`scan-summary.md` and `report-before.md` also show coverage status, logical size, hardlink-deduped size, and the gap between device-used space and scanned files. That gap includes app-internal data, system data, unscanned areas and filesystem overhead; it is not reclaimable space.
+
+### MediaStore auxiliary index
+
+Since v1.4.0, `scan` optionally queries Android MediaStore via read-only `content query` for `images`, `video`, `audio` and `downloads`:
+
+```powershell
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial
+python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Serial --no-media
+```
+
+Host-side output:
+
+- `scan/aux/sources.json`: collection status, projection, limits.
+- `scan/aux/media-index.jsonl`: deduplicated media index rows.
+
+`analyze` cross-checks the index against the filesystem snapshot and adds a "MediaStore cross-check" section to `report-before.md` plus `summary.media_index` in `analysis-summary.json`:
+
+- `matched`: both sources agree.
+- `index_only`: in the index but not in the file snapshot; split into in-scope and out-of-scope. **Never treated as proof that a file was deleted.**
+- `scan_only`: in the file snapshot but not in the index; may be unindexed, hidden or app-private media. **Not an anomaly.**
+- `size_mismatch`: the index may be stale; filesystem wins.
+- `trashed` / `pending`: index state hints only.
+
+The media index is evidence only. It never creates candidates, changes risk or selectability, and its size is not added to the file-scan total.
+
+Verified on HONOR HLK-AL00 (HarmonyOS 3.0 compat / Android 10 / SDK 29): 4,965 index rows / 7.35 GB; 4,964 matched, 8 differed only by path case, 1 was out of scan scope, 0 in-scope missing, 99.98% match. The `downloads` collection is unavailable on this ROM and degrades to partial. No files were modified.
+
 ### Command reference
 
 | Command | Purpose | Modifies the phone |
@@ -364,8 +411,9 @@ Common targeted selections:
 | `quarantine purge` | Permanently delete quarantined files and free space | Yes |
 | `restore` | Restore files from quarantine | Yes |
 | `recheck` | Rescan and compare with the previous round | No (writes a new snapshot) |
+| `archive diff/stats/mark` | Inspect cross-round directory changes and write analysis notes | No (host state only) |
 | `export` | Export candidate, file and execution CSVs | No |
-| `history` | List historical scan snapshots | No |
+| `history` | List historical scan snapshots and archive stats | No |
 
 Exit codes:
 
@@ -386,6 +434,7 @@ Exit codes:
 - Never add DANGEROUS items to a selection. Never lower a risk level.
 - Never run `execute`, `quarantine purge` or `restore` without explicit user approval.
 - Never delete system directories, app databases or account data, OBB files of installed apps, chat history or chat media, original personal photos/videos, or files of unknown purpose.
+- The directory archive, cross-round changes and `archive mark` are evidence only; they must not create candidates or authorize deletion.
 - Never follow symlinks. Never empty an entire directory. Only touch explicit paths from the candidate manifest.
 - The CLI re-checks size, mtime and inode before each operation; changed files are skipped and reported.
 - With multiple devices, always pass `--serial`. Execution verifies that the connected device matches the plan.
@@ -436,6 +485,13 @@ Key default thresholds (source: `scripts/adc_lib/config.py`):
 | `media_old_days` | 730 | Old media threshold |
 | `download_old_days` | 30 | Old download threshold |
 | `safety.generic_cache_risk` | `caution` | Generic cache policy; set to `safe` to restore the old behavior |
+| `archive.min_dir_bytes` | 10485760 | Minimum directory size tracked by the archive (10 MiB) |
+| `archive.grow_bytes` | 52428800 | Minimum growth treated as significant (50 MiB) |
+| `archive.grow_percent` | 20 | Minimum growth percentage treated as significant |
+| `media_store.enabled` | `true` | Enable the MediaStore auxiliary index |
+| `media_store.collections` | four collections | `images/video/audio/downloads` |
+| `media_store.timeout_seconds` | 60 | Per-collection query timeout |
+| `media_store.max_items` | 200000 | Index row cap; marks the result truncated |
 
 ## Project structure
 
@@ -444,9 +500,9 @@ Key default thresholds (source: `scripts/adc_lib/config.py`):
 ├── android-deep-clean/          # The skill itself
 │   ├── SKILL.md                 # Instructions read by the agent
 │   ├── scripts/
-│   │   ├── adc.py               # CLI entry, 14 subcommands
+│   │   ├── adc.py               # CLI entry, 15 subcommands
 │   │   ├── install_skill.ps1    # Backup, copy, verify, roll back on failure
-│   │   └── adc_lib/             # Transport, scan, analyze, plan, execute, reports
+│   │   └── adc_lib/             # Transport, scan, archive, MediaStore, reconcile, analyze, plan, execute, reports
 │   └── references/              # Safety policy, path rules, review guide, USB/ADB, HarmonyOS
 ├── tests/                       # pytest cases and mock fixtures (no phone needed)
 ├── docs/                        # Install, CLI contract, HarmonyOS support, acceptance, test report
@@ -462,7 +518,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-06 / v1.2.8: 195 passed, 1 skipped (196 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it.
+Measured on 2026-11-09 / v1.4.0: 222 passed, 1 skipped (223 collected). The skipped case needs symlink creation, which this Windows environment cannot do; Linux CI runs it. MediaStore has 11 automated tests and one real-device read-only validation.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -506,7 +562,11 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - atime is unreliable on Android, so age is based on mtime. Anomalous mtimes (before 2000, or more than 24 hours in the future) do not drive candidate selection.
 - No system-level cleanup (system cache partitions, OTA). `pm`/`find` behavior differs across ROMs.
 - Quarantine and restore depend on the local state directory; losing it prevents automatic restore.
-- HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, and `bm clean` is not wired into the executor.
+- The directory archive is path-based: a rename appears as "missing + new". Incomplete scans and environment changes suppress vanished conclusions.
+- The archive tracks directories ≥10 MiB and app directories by default; app-version detection needs `pm list packages --show-versioncode`.
+- The directory archive and coverage changes have not been accepted on a real device.
+- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences.
+- HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, it does not use Android MediaStore, and `bm clean` is not wired into the executor.
 - The on-device Termux / Shizuku paths have not been accepted on a real device.
 
 Real-device status:
@@ -514,6 +574,7 @@ Real-device status:
 | Item | Status |
 |---|---|
 | Read-only on a real device (local + ADB) | 1 device passed: HONOR HLK-AL00, HarmonyOS 3.0 compat / Android 10 |
+| MediaStore read-only index | 1 device passed: HONOR HLK-AL00; images/video/audio available, `downloads` unavailable on this ROM; 4,964 of 4,965 rows matched, 0 in-scope missing |
 | Quarantine / verify / restore | 1 device passed, self-created test files only |
 | Cleanup of real user data | 0 devices accepted |
 | Permanent delete (purge) | Not verified on a real device |

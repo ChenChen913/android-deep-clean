@@ -1,6 +1,6 @@
 # ADC CLI 契约（测试与集成用）
 
-状态：v1.2（2026-11-06）。命令参数必须写在子命令之后。
+状态：v1.3.0（2026-11-09）。命令参数必须写在子命令之后。
 
 ## 入口
 
@@ -24,7 +24,14 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
 | `verify` | 验证执行结果 | 否 |
 | `quarantine purge --token PURGE_TOKEN` | 永久删除隔离文件 | 是 |
 | `restore [--ids ...] [--all]` | 从隔离区恢复 | 是 |
-| `recheck` | 重新扫描并对比上一轮 | 否（写新快照） |
+| `recheck [--no-archive]` | 重新扫描并对比上一轮 | 否（写新快照） |
+| `archive diff` | 读取本轮目录差分 | 否 |
+| `archive stats` | 查看目录档案统计 | 否 |
+| `archive mark --path PATH --decision keep/watch/neutral [--note TEXT]` | 给目录写分析标记 | 否 |
+
+`scan` 额外参数：`--roots`、`--max-depth`、`--max-files`、`--no-internal`、`--no-archive`。`snapshot-meta.json` 新增 `coverage` 对象，包含 `status`（good/partial/suspect）、`root_status`、`skipped_paths`、`logical_bytes`、`unique_bytes`、`hardlink_saved_bytes`、`dir_count` 等字段；`directory-diff.json` 记录本轮跨轮目录变化。
+
+`archive mark` 只接受 `keep/watch/neutral`。标记是分析证据，不是删除授权，不改变任何候选风险或选择资格。
 
 状态目录固定结构：
 
@@ -32,7 +39,9 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
 .adc-state/
   state.json
   doctor/doctor.json report-doctor.md
-  scan/snapshot.db snapshot-meta.json scan-summary.md
+  scan/snapshot.db snapshot-meta.json scan-summary.md directory-diff.json
+  history/scan-<时间>/ snapshot.db snapshot-meta.json scan-summary.md
+  history/archive.db
   analysis/analysis.db analysis.json analysis-summary.json review-template.json report-before.md
   plan/plan.json report-plan.md
   selection/selection.json report-selection.md

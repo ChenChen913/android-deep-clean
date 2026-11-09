@@ -335,35 +335,50 @@ class ShellTransport(Transport):
 
     def list_packages(self) -> PackageIndex:
         index = PackageIndex()
-        rc, out, err = self.shell_rc("pm list packages -u", timeout=180)
-        if rc != 0:
-            index.available = False
-            index.error = (err or out).strip()[:500]
+        all_packages, all_versions = self._list_pm("-u", index)
+        if not index.available:
             return index
-        all_packages = self._parse_pm(out)
-        rc_i, out_i, err_i = self.shell_rc("pm list packages", timeout=180)
-        if rc_i != 0:
-            index.available = False
-            index.error = (err_i or out_i).strip()[:500] or "pm list packages 失败，无法可靠区分已安装包"
+        installed, installed_versions = self._list_pm("", index)
+        if not index.available:
             return index
-        installed = self._parse_pm(out_i)
-        rc_s, out_s, _ = self.shell_rc("pm list packages -s", timeout=180)
-        system = self._parse_pm(out_s) if rc_s == 0 else set()
+        system, system_versions = self._list_pm("-s", index)
         index.installed = installed
         index.uninstalled = all_packages - installed
         index.system = system
+        index.versions = {**all_versions, **installed_versions, **system_versions}
+        index.version_available = bool(index.versions)
         return index
 
+    def _list_pm(self, flag: str, index: PackageIndex) -> tuple[set[str], dict[str, str]]:
+        command = "pm list packages" + (f" {flag}" if flag else "") + " --show-versioncode"
+        rc, out, err = self.shell_rc(command, timeout=180)
+        if rc != 0:
+            command = "pm list packages" + (f" {flag}" if flag else "")
+            rc, out, err = self.shell_rc(command, timeout=180)
+            if rc != 0:
+                index.available = False
+                index.error = (err or out).strip()[:500] or "pm list packages 失败，无法可靠区分已安装包"
+                return set(), {}
+        return self._parse_pm(out)
+
     @staticmethod
-    def _parse_pm(output: str) -> set[str]:
+    def _parse_pm(output: str) -> tuple[set[str], dict[str, str]]:
         packages: set[str] = set()
+        versions: dict[str, str] = {}
         for line in output.splitlines():
             line = line.strip()
-            if line.startswith("package:"):
-                name = line.split(":", 1)[1].strip()
-                if name:
-                    packages.add(name)
-        return packages
+            if not line.startswith("package:"):
+                continue
+            payload = line.split(":", 1)[1].strip()
+            parts = payload.split()
+            if not parts:
+                continue
+            name = parts[0]
+            packages.add(name)
+            for part in parts[1:]:
+                if part.startswith("versionCode:"):
+                    versions[name] = part.split(":", 1)[1]
+        return packages, versions
 
     def access(self, path: str) -> AccessProbe:
         path = normalize_device_path(path)

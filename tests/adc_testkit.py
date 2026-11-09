@@ -82,6 +82,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "report": {"sample_paths": 20, "max_detail_items": 120, "top_protected": 15},
     "safety": {"leftover_age_hours": 1, "max_files_per_selection": 200000, "require_ai_review_for_caution": True,
                "generic_cache_risk": "safe"},
+    "archive": {
+        "enabled": True,
+        "min_dir_bytes": 100,
+        "grow_bytes": 100,
+        "grow_percent": 0,
+        "max_entries": 50000,
+        "max_diff_items": 200,
+    },
     "exclude_paths": ["/sdcard/.android-deep-clean", "/sdcard/Android/.android-deep-clean"],
     "extra_protected_paths": [],
 }
@@ -360,6 +368,13 @@ class AdcEnv:
 
     def set_packages(self, **overrides: Any) -> None:
         self.packages.update(overrides)
+        self.flush()
+
+    def set_media_store(self, **overrides: Any) -> None:
+        current = self.caps.get("media_store")
+        media = current if isinstance(current, dict) else {}
+        media.update(overrides)
+        self.caps["media_store"] = media
         self.flush()
 
     def set_config(self, **overrides: Any) -> None:

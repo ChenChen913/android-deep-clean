@@ -20,6 +20,224 @@ from .util import (
 PROTECTED_NOTE = "受保护内容不会出现在可执行计划中。"
 
 
+def _storage_lines(storage: dict[str, Any], coverage: dict[str, Any]) -> list[str]:
+    if not storage:
+        return []
+    device = storage.get("device_storage") or {}
+    scan = storage.get("file_scan") or {}
+    unexplained = storage.get("unexplained") or {}
+    ratio = scan.get("scan_ratio")
+    lines = [
+        "## 存储空间与扫描覆盖",
+        "",
+        f"覆盖率状态：**{coverage.get('status') or storage.get('coverage_status') or 'unknown'}**",
+        "",
+        "| 指标 | 数值 | 口径说明 |",
+        "|---|---:|---|",
+        f"| 设备已用空间 | {device.get('used_human') or '-'} | "
+        f"`{device.get('path') or '-'}`，块占用 |",
+        f"| 文件扫描唯一大小 | {scan.get('unique_human') or '-'} | "
+        f"{scan.get('files', 0)} 个文件，逻辑大小；硬链接只计一次 |",
+        f"| 扫描逻辑大小 | {scan.get('logical_human') or '-'} | 未去重；与上一行差额为硬链接 |",
+    ]
+    if ratio is not None:
+        lines.append(f"| 去重后扫描大小 / 设备已用 | {float(ratio) * 100:.1f}% | 块占用与逻辑大小口径不同，仅作参考 |")
+    if unexplained.get("used_minus_scan_bytes") is not None:
+        lines.append(
+            f"| 未由文件扫描解释 | {unexplained.get('used_minus_scan_human') or '-'} | "
+            "包含应用内部数据、系统数据、未扫描区域和文件系统开销，不能当作可回收空间 |"
+        )
+    lines += ["", unexplained.get("note") or "", ""]
+    largest = coverage.get("largest_dirs") or []
+    if largest:
+        lines += ["### 最大目录（扫描范围内）", "", "| 目录 | 逻辑大小 | 文件数 |", "|---|---:|---:|"]
+        for item in largest[:10]:
+            lines.append(
+                f"| {md_code(safe_display_path(str(item.get('path') or '')))} | "
+                f"{human_bytes(int(item.get('bytes') or 0))} | {int(item.get('files') or 0)} |"
+            )
+        lines.append("")
+    reasons = coverage.get("reasons") or storage.get("coverage_reasons") or []
+    if reasons:
+        lines += ["覆盖限制：", ""]
+        lines += [f"- {item}" for item in reasons]
+        lines.append("")
+    return lines
+
+
+_MEDIA_STATUS_LABELS = {
+    "collected": "已采集",
+    "partial": "部分可用",
+    "unavailable": "不可用",
+    "unsupported": "不支持",
+    "disabled": "本轮未采集",
+    "not_collected": "未采集",
+}
+_COLLECTION_LABELS = {"images": "图片", "video": "视频", "audio": "音频", "downloads": "下载"}
+
+
+def _media_lines(media: dict[str, Any]) -> list[str]:
+    if not media:
+        return []
+    status = str(media.get("status") or "not_collected")
+    available = bool(media.get("available"))
+    lines = [
+        "## 媒体索引核对（第二数据源）",
+        "",
+        "> 媒体索引只作为证据，不能授权删除；其大小不计入文件扫描合计。",
+        "",
+        f"- 状态：{_MEDIA_STATUS_LABELS.get(status, status)}",
+    ]
+    if media.get("reason"):
+        lines.append(f"- 原因：{md_escape(str(media['reason']))}")
+    if not available:
+        for item in media.get("collections") or []:
+            if item.get("status") != "ok" and item.get("error"):
+                lines.append(f"- {item.get('label') or item.get('name')}：{md_escape(str(item['error']))}")
+        lines += [
+            "",
+            "媒体索引缺失或不可用不影响文件扫描结果，但本轮无法解释媒体库与文件系统之间的差异。",
+            "",
+        ]
+        return lines
+    index = media.get("index") or {}
+    cross = media.get("crosscheck") or {}
+    ratio = cross.get("match_ratio")
+    lines += [
+        "",
+        "| 指标 | 数值 | 口径说明 |",
+        "|---|---:|---|",
+        f"| 媒体库条目 | {index.get('items', 0)} | 来自系统 MediaStore |",
+        f"| 媒体库声明大小 | {index.get('bytes_human') or human_bytes(int(index.get('bytes') or 0))} | 索引字段 `_size`，不等于扫描大小 |",
+        f"| 可解析路径 | {index.get('path_known', 0)} | 其余 {index.get('path_unknown', 0)} 条无法与文件路径核对 |",
+        f"| 文件扫描中可找到 | {cross.get('found_in_scan', 0)} | "
+        + (f"匹配率 {float(ratio) * 100:.1f}%" if ratio is not None else "匹配率未知") + " |",
+        f"| 索引有、扫描无（范围内） | {cross.get('index_only_in_scope', 0)} | "
+        "可能位于不可读区域、索引延迟或文件已移动；不能认定文件已删除 |",
+        f"| 索引有、扫描无（范围外） | {cross.get('index_only_outside_scope', 0)} | 不在本轮扫描根目录内，无法核对 |",
+        f"| 扫描有、索引无 | {cross.get('scan_only', 0)} | "
+        f"共享目录内约 {human_bytes(int(cross.get('scan_only_bytes') or 0))}；可能未索引/隐藏目录，不代表异常 |",
+        f"| 大小不一致 | {cross.get('size_mismatch', 0)} | 索引可能过期，以文件系统为准 |",
+        f"| 仅大小写不同 | {cross.get('case_mismatch', 0)} | 共享存储通常大小写不敏感，已按同一路径核对 |",
+        f"| 回收站 / pending | {index.get('trashed', 0)} / {index.get('pending', 0)} | 仅提示索引状态，不改变文件风险 |",
+        "",
+    ]
+
+    def sample_table(title: str, items: list[dict[str, Any]]) -> None:
+        if not items:
+            return
+        lines.extend([
+            f"### {title}", "",
+            "| 路径 | 索引大小 | 集合 | 说明 |", "|---|---:|---|---|",
+        ])
+        for item in items[:8]:
+            collections = "、".join(
+                _COLLECTION_LABELS.get(str(name), str(name))
+                for name in (item.get("collections") or [])
+            ) or "-"
+            lines.append(
+                f"| {md_code(safe_display_path(str(item.get('path') or '')))} | "
+                f"{item.get('human_size') or human_bytes(int(item.get('size') or 0))} | "
+                f"{md_escape(collections)} | {md_escape(str(item.get('reason') or ''))} |"
+            )
+        lines.append("")
+
+    samples = cross.get("samples") or {}
+    sample_table("索引有、文件扫描无（本轮范围内）", samples.get("index_only") or [])
+    sample_table("索引有、文件扫描无（范围外）", samples.get("index_only_outside") or [])
+    sample_table("大小不一致", samples.get("size_mismatch") or [])
+    sample_table("扫描有、媒体索引无", samples.get("scan_only") or [])
+    limitations = media.get("limitations") or []
+    if limitations:
+        lines += ["媒体索引限制：", ""]
+        lines += [f"- {md_escape(str(item))}" for item in limitations]
+        lines.append("")
+    return lines
+
+
+def _directory_lines(diff: dict[str, Any]) -> list[str]:
+    if not diff:
+        return []
+    summary = diff.get("summary") or {}
+    lines = [
+        "## 跨轮目录变化",
+        "",
+        "> 目录档案只提供线索，不改变风险等级，也不构成删除授权。",
+        "",
+    ]
+    if diff.get("baseline"):
+        reason = {
+            "first_scan": "首次扫描，已建立目录基线",
+            "environment_changed": "设备环境变化，已重新建立基线",
+        }.get(str(diff.get("baseline_reason") or ""), "已建立目录基线")
+        lines.append(f"- {reason}；下一轮开始显示新增、增长、缩小、消失和复活。")
+    else:
+        lines.append(
+            f"- 新增 {summary.get('new', 0)}；增长 {summary.get('grew', 0)}；"
+            f"缩小 {summary.get('shrunk', 0)}；本轮未再出现 {summary.get('vanished', 0)}；"
+            f"删后复活 {summary.get('resurrected', 0)}；疑似残留 {summary.get('orphan_suspect', 0)}"
+        )
+    if diff.get("scan_complete") is False:
+        lines.append("- 本轮扫描不完整：消失类变化未计入，避免把未扫描区域误判为已删除。")
+    if diff.get("environment_changed"):
+        lines.append("- 设备系统/用户/指纹发生变化，本轮按新基线处理，未把全部目录标成新增或消失。")
+    lines.append("")
+
+    def table(title: str, items: list[dict[str, Any]], columns: str) -> None:
+        rows = items[:10]
+        if not rows:
+            return
+        lines.extend([f"### {title}", "", f"| {columns} |", "|---|---:|---|---|"])
+        for item in rows:
+            path = md_code(safe_display_path(str(item.get("path") or "")))
+            pkg = item.get("app_pkg") or "-"
+            if title == "增长明显":
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"+{human_bytes(int(item.get('delta_bytes') or 0))} | {md_escape(pkg)} |"
+                )
+            elif title == "新增目录":
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"{item.get('files', 0)} | {md_escape(pkg)} |"
+                )
+            elif title == "删后复活":
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"{item.get('resurrect_count', 1)} | {md_escape(pkg)} |"
+                )
+            elif title == "未审查目录":
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"{item.get('files', 0)} | {md_escape(pkg)} |"
+                )
+            elif title == "应用版本变化":
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"{md_escape(str(item.get('previous_version') or '-'))} -> "
+                    f"{md_escape(str(item.get('version') or '-'))} | {md_escape(pkg)} |"
+                )
+            else:
+                lines.append(
+                    f"| {path} | {item.get('human_size') or human_bytes(int(item.get('bytes') or 0))} | "
+                    f"{item.get('reason') or '-'} | {md_escape(pkg)} |"
+                )
+        lines.append("")
+
+    table("增长明显", diff.get("grew") or [], "路径 | 当前大小 | 增量 | 应用")
+    table("新增目录", diff.get("new") or [], "路径 | 大小 | 文件数 | 应用")
+    table("删后复活", diff.get("resurrected") or [], "路径 | 大小 | 复活次数 | 应用")
+    table("疑似卸载残留", diff.get("orphan_suspect") or [], "路径 | 大小 | 原因 | 应用")
+    table("应用版本变化", diff.get("app_updated") or [], "路径 | 大小 | 旧版本 -> 新版本 | 应用")
+    table("未审查目录", diff.get("unreviewed") or [], "路径 | 大小 | 文件数 | 应用")
+    limitations = diff.get("limitations") or []
+    if limitations:
+        lines += ["档案限制：", ""]
+        lines += [f"- {item}" for item in limitations]
+        lines.append("")
+    return lines
+
+
 def _risk_badge(risk: str) -> str:
     return f"{risk}（{RISK_LABELS.get(risk, risk)}）"
 
@@ -46,6 +264,11 @@ def analysis_markdown(analysis: dict[str, Any], config: dict[str, Any]) -> str:
         f"- 候选组：{summary.get('candidate_groups', 0)}，涉及文件 {summary.get('candidate_files', 0)} 个，逻辑大小 {human_bytes(summary.get('candidate_bytes', 0))}",
         f"- 需要 AI/人工复核：{summary.get('review_required', 0)} 组",
         "",
+    ]
+    lines += _storage_lines(summary.get("storage") or {}, summary.get("coverage") or {})
+    lines += _media_lines(summary.get("media_index") or {})
+    lines += _directory_lines(summary.get("directory_changes") or {})
+    lines += [
         "## 分类总览",
         "",
         "| 分类 | 组数 | 文件数 | 逻辑大小 | 最高风险 | 建议 |",
@@ -355,8 +578,9 @@ def recheck_markdown(recheck: dict[str, Any]) -> str:
         )
     if not recheck.get("new_items"):
         lines.append("| - | - | - | 0 B | 无 |")
+    lines += [""]
+    lines += _directory_lines(recheck.get("directory_changes") or {})
     lines += [
-        "",
         "## 说明",
         "",
         "- 复查会重新扫描相同根目录，并生成新的分析；不会自动删除任何内容。",

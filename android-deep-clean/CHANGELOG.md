@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.4.0 — MediaStore 只读辅助索引与交叉验证
+
+### Added
+- `scan` 新增 MediaStore 辅助采集：通过 `content query` 只读查询 `images`、`video`、`audio`、`downloads`，支持完整/安全/最小三级字段投影自动降级。
+- 新增主机侧 `scan/aux/sources.json` 与 `scan/aux/media-index.jsonl`；记录集合状态、条目、声明大小、路径可解析数、trashed/pending 与限制。
+- `analyze` 新增 `summary.media_index` 与 `analysis.db` 的 `media_items` / `source_status` 表，逐路径输出 `matched`、`size_mismatch`、`index_only`（区分扫描范围内/外）、`path_unknown` 与 `scan_only`。
+- `report-before.md` 新增「媒体索引核对（第二数据源）」区块与差异样本；候选证据为媒体类补充 MIME、尺寸、时长、trashed/pending、大小不一致与未索引提示。
+- `scan` / `recheck` 新增 `--no-media`；配置新增 `media_store.enabled/collections/timeout_seconds/max_items/max_output_bytes`。
+
+### Safety
+- MediaStore 只读，不生成候选、不改变风险等级/可选择性/文件清单，不进入 `snapshot.db` 的 `entries` 或 `history/archive.db`，也不参与 `plan/select/execute`。
+- 索引不可用、部分集合失败、路径未知、HarmonyOS NEXT、Termux 无权限时如实降级并写入限制；媒体索引大小不计入文件扫描合计。
+- 新增 11 个 MediaStore 测试（解析、路径推导、投影降级、去重、大小写路径、交叉核对、候选不变、`--no-media`、不可用降级、HarmonyOS NEXT）；全量 222 passed, 1 skipped。
+
+### Fixed
+- 真机发现并修复：MediaStore 日期列名为 `datetaken`（原写成 `date_taken`），部分 ROM 不支持 `media_type`，现已移除；修正后图片/视频/音频使用完整投影成功。
+- 真机发现共享存储路径大小写不一致（MediaStore `tencent` / 文件系统 `Tencent`），交叉核对改为大小写不敏感，并单独统计 `case_mismatch`，避免误报“索引有、扫描无”。
+
+### Verified
+- HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）只读真机验证：doctor、scan、analyze 成功；4,965 条媒体索引 / 7.35 GB，4,964 条匹配，8 条仅大小写不同，1 条在扫描范围外，范围内缺失 0 条，匹配率 99.98%。该 ROM 的 `downloads` 集合不可用，按部分可用降级。
+- 未执行 select/execute/purge/restore，未修改任何手机文件。
+
+### Limitations
+- `content query` 的可用性受 shell 权限、OEM、Android 版本影响；已通过 1 台真机验证，更多机型仍需验证。
+- 不覆盖其他用户、工作资料、隐藏目录、应用私有媒体或所有 SD 卡卷；索引延迟可能造成“索引有、扫描无”的差异，不能据此认定文件已删除。
+
+## v1.3.0 — 跨轮目录档案与扫描覆盖率
+
+### Added
+- `scan` 新增 `dir_stats` 表：记录每个目录的直接大小、完整子树大小、文件数和最新 mtime，供报告与跨轮档案复用；旧快照没有该表时自动降级。
+- `scan` 新增覆盖率报告：根目录请求/实际扫描状态、跳过路径、截断、深度限制、逻辑大小与按 `(dev, inode)` 去重后的大小，并写入 `snapshot-meta.json` 与 `scan-summary.md`。
+- 新增 `history/archive.db` 目录档案：首轮建立基线，后续记录新增、增长、缩小、本轮未再出现、删后复活、疑似卸载残留、应用版本变化和未审查目录。
+- 新增 `archive diff|stats|mark` 命令；`mark` 只支持 keep/watch/neutral，备注仅作为分析证据，不是删除授权。
+- `analyze` 报告新增「存储空间与扫描覆盖」「跨轮目录变化」区块；候选证据增加跨轮档案与变化线索；`recheck` 增加目录变化区块并复用主状态目录的档案。
+- 配置新增 `archive.min_dir_bytes`、`grow_bytes`、`grow_percent`、`max_entries`、`max_diff_items`；`scan`/`recheck` 支持 `--no-archive`。
+
+### Safety
+- 目录档案只写主机侧状态目录，不访问设备，也不进入候选清单、计划或选择令牌。
+- 扫描不完整、权限缺口、环境变化时不做消失判断；档案标记不改变任何风险等级。
+- 新增 16 个目录档案/覆盖率测试；全量测试 211 passed, 1 skipped。
+
 ## v1.2.8 — 异常时间戳不再参与候选筛选
 
 ### Fixed

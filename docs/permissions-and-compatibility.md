@@ -24,11 +24,21 @@
 | ADB shell（标准） | USB/无线调试 | /sdcard；Android 11+ 通常含 Android/data/obb（实现细节，OEM 可能收紧） | /data/data、/data/media、系统诊断目录 | standard/limited；doctor 实测 |
 | Shizuku/rish | Shizuku 启动后 rish | 同 ADB shell | 同 ADB shell | 同 standard/limited |
 | SAF/MediaStore | 普通应用/用户选择 | 用户选择的目录/媒体 | Android/data、obb、应用私有、未索引文件 | 不作为本 Skill 主通道 |
+| MediaStore（shell 辅助） | ADB shell / rish | 图片/视频/音频/下载媒体索引及元数据 | 未索引文件、应用私有媒体、部分 SD 卡/多用户卷 | v1.4.0 起只读交叉验证；不生成候选、不授权删除 |
 | 无权限 | 未连接/未授权 | 无 | 全部 | 停止并提示，不假扫描 |
 
+MediaStore 辅助索引（v1.4.0）：
+
+- `scan` 通过 `content query` 查询 `external` 卷的 `images/video/audio/downloads`；使用 shell UID 2000 或 Shizuku shell，不需要 Root，也不绕过系统权限。
+- `downloads` 集合仅 Android 10 / API 29+ 尝试；`relative_path`、`is_pending` 为 API 29+；`is_trashed` 为 API 30+。字段被设备拒绝时自动降级到更小投影。
+- Termux `local` 通常没有媒体读取权限，会记为不可用；ADB/Shizuku 也可能因 OEM 收紧失败，报告只写差异，不据此删除文件。
+- 媒体索引不保证覆盖其他用户、工作资料、隐藏目录、应用私有媒体或所有 SD 卡卷；其大小与文件扫描、应用统计口径不同，不能相加。
+- 真机验证：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）只读通过；图片/视频/音频可采集，`downloads` 集合在该 ROM 返回 unknown URL，已降级为部分可用；路径大小写差异已按共享存储不敏感处理。
+
 Android 版本差异：
-- Android 10：默认 scoped storage，但 target 29 可临时退出。
+- Android 10：默认 scoped storage，但 target 29 可临时退出；MediaStore 新增 Downloads 集合。
 - Android 11+：强制 scoped + FUSE；Android/data、obb 从 SAF 移除；ADB shell 因 UID 2000 通常仍可访问，但这是实现细节。
+- Android 12+：MediaStore 提供 `is_trashed`；回收站条目可能延迟刷新。
 - Android 13：媒体权限细分；普通应用相册访问受限。
 - Android 14：Selected Photos；普通应用不能全相册批量。
 - Android 15：未检索到共享存储权限变更。
@@ -62,7 +72,8 @@ Android 版本差异：
 - 扫描 10 万级文件通常可接受；百万级可能较慢，建议缩小 --roots 或提高 --max-depth 限制。
 - 重复检测只对大小相同的文件计算 SHA-256，默认预算 4GB/5000 文件；超出会报告未完全校验。
 - 隔离是逐文件 mv；超大缓存组会较慢，但更安全。隔离区仍占用空间，purge 后才释放。
-- 快照使用 SQLite，单次扫描写入 .adc-state/scan/snapshot.db。
+- 快照使用 SQLite，单次扫描写入 .adc-state/scan/snapshot.db；目录统计写入同一快照的 dir_stats 表。
+- 跨轮目录档案写入主机侧 .adc-state/history/archive.db，不需要新增手机权限，也不访问设备。
 
 ## 5. 已知不兼容/限制
 
