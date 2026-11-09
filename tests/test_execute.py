@@ -674,3 +674,99 @@ def test_purge_requires_token_and_deletes_permanently(env):
     again = _run_purge(env, purge_token)
     again.expect(0)
     assert again.json()["purged_files"] == 0
+
+
+def test_repeated_purge_keeps_history_and_verify_stays_clean(env):
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.phone.file(CACHE + "/b.bin", size=500)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    token = execution["purge_token"]
+
+    first = _run_purge(env, token)
+    first.expect(0)
+    assert first.json()["purged_files"] == 2
+
+    second = _run_purge(env, token)
+    second.expect(0)
+    payload = second.json()
+    assert payload["purged_files"] == 0, "the second run itself deletes nothing"
+    assert payload["cumulative"]["purged_files"] == 2
+    assert payload["cumulative"]["purged_bytes"] == 800
+
+    stored = env.execution
+    assert stored["purge"]["purged_files"] == 2, "history must not collapse to 0"
+    assert stored["purge"]["purged_bytes"] == 800
+    assert stored["purge"]["last_run"]["purged_files"] == 0
+    assert len(stored["purge"]["runs"]) == 2
+    assert stored["quarantine_state"]["remaining_files"] == 0
+
+    entries = _quarantined_entries(env)
+    assert len(entries) == 2
+    assert all(entry.get("purge_status") == "purged" for entry in entries)
+    assert not any(entry.get("purge_status") == "missing" for entry in entries)
+
+    verification = env.ok("verify").json()
+    assert verification["summary"]["checked"] == 0
+    assert verification["summary"]["failed"] == 0
+    assert verification["summary"]["quarantine_missing"] == 0
+
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "永久删除（累计）" in html
+    assert "没有可验证项目" in html
+    assert "所有检查项通过" not in html
+    assert "隔离区仍位于手机上" not in html
+
+
+def test_purge_after_restore_does_not_mark_restored_entries_missing(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    env.ok("restore", "--all")
+
+    result = _run_purge(env, execution["purge_token"])
+    result.expect(0)
+    assert result.json()["purged_files"] == 0
+    assert result.json()["quarantine_remaining"]["remaining_files"] == 0
+
+    entries = _quarantined_entries(env)
+    assert entries[0].get("restore_status") == "restored"
+    assert "purge_status" not in entries[0], "restored files are not missing quarantine files"
+    assert env.phone.exists(path)
+    assert env.ok("verify").json()["summary"]["failed"] == 0
+
+
+def test_multiple_restore_runs_keep_cumulative_totals(env):
+    env.set_packages(installed=["com.installed.app", "com.other.app"])
+    env.phone.file(CACHE + "/a.bin", size=300)
+    env.phone.file("/sdcard/Android/data/com.other.app/cache/b.bin", size=500)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    ids = [item["id"] for item in selection["items"]]
+    assert len(ids) == 2
+    env.execute_ok()
+
+    first = env.ok("restore", "--ids", ids[0]).json()
+    second = env.ok("restore", "--ids", ids[1]).json()
+    assert first["restored_files"] == 1
+    assert second["restored_files"] == 1
+    assert second["cumulative"]["restored_files"] == 2
+    assert second["cumulative"]["restored_bytes"] == 800
+    assert second["quarantine_remaining"]["remaining_files"] == 0
+
+    stored = env.execution
+    assert stored["restore"]["restored_files"] == 2, "batched restores must be added up"
+    assert stored["restore"]["restored_bytes"] == 800
+    assert stored["restore"]["last_run"]["restored_files"] == 1
+    assert len(stored["restore"]["runs"]) == 2
+
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "已恢复（累计）" in html
+    assert "restore 执行记录" in html
+    assert "隔离区已清空" in html

@@ -609,15 +609,17 @@ def render_cleanup_html(
         ("失败文件", f"{_num(ex.get('failed_files'))} 个"),
         ("处理逻辑大小", human_bytes(_num(ex.get('processed_bytes')))),
         ("已释放", human_bytes(_num(ex.get('released_bytes')))),
-        ("隔离区占用", human_bytes(_num(ex.get('quarantine_occupied_bytes')))),
+        ("隔离区占用", human_bytes(_num(
+            (execution.get("quarantine_state") or {}).get("remaining_bytes", ex.get("quarantine_occupied_bytes"))
+        ))),
         ("可用空间变化", _signed_size(ex.get("df_delta_bytes"))),
     ]
     if verify:
         cards.append(("验证通过", f"{_num(verify.get('passed'))} / {_num(verify.get('checked'))}"))
     if purge:
-        cards.append(("永久删除", f"{_num(purge.get('purged_files'))} 个 / {human_bytes(_num(purge.get('purged_bytes')))}"))
+        cards.append(("永久删除（累计）", f"{_num(purge.get('purged_files'))} 个 / {human_bytes(_num(purge.get('purged_bytes')))}"))
     if restore:
-        cards.append(("已恢复", f"{_num(restore.get('restored_files'))} 个 / {human_bytes(_num(restore.get('restored_bytes')))}"))
+        cards.append(("已恢复（累计）", f"{_num(restore.get('restored_files'))} 个 / {human_bytes(_num(restore.get('restored_bytes')))}"))
     parts.append(_cards(cards))
 
     parts.append(_cleanup_process(summary, sel, execution, verify, purge, restore, mode))
@@ -678,25 +680,39 @@ def _cleanup_process(
         ),
     ]
     if verify:
-        steps.append((
-            "验证",
-            f"检查 {_num(verify.get('checked'))}，通过 {_num(verify.get('passed'))}，"
-            f"失败 {_num(verify.get('failed'))}。",
-        ))
+        checked = _num(verify.get("checked"))
+        if checked <= 0:
+            steps.append(("验证", "没有可验证项目（记录已全部 purge 或恢复）；这不等于验证通过。"))
+        else:
+            steps.append((
+                "验证",
+                f"检查 {checked}，通过 {_num(verify.get('passed'))}，"
+                f"失败 {_num(verify.get('failed'))}。",
+            ))
     else:
         steps.append(("验证", "尚未运行 verify；当前执行结果还没有经过独立核对。"))
     if purge:
-        steps.append((
-            "释放空间",
-            f"永久删除 {_num(purge.get('purged_files'))} 个 / {human_bytes(_num(purge.get('purged_bytes')))}；"
-            f"可用空间变化 {_signed_size(purge.get('free_delta'))}。",
-        ))
+        purge_runs = [item for item in purge.get("runs") or [] if isinstance(item, dict)]
+        purge_last = purge.get("last_run") if isinstance(purge.get("last_run"), dict) else purge
+        detail = (
+            f"永久删除 {_num(purge.get('purged_files'))} 个 / "
+            f"{human_bytes(_num(purge.get('purged_bytes')))}（累计）"
+        )
+        if len(purge_runs) > 1:
+            detail += f"；最近一次删除 {_num(purge_last.get('purged_files'))} 个"
+        detail += f"；可用空间变化 {_signed_size(purge_last.get('free_delta'))}。"
+        steps.append(("释放空间", detail))
     if restore:
-        steps.append((
-            "恢复文件",
-            f"已恢复 {_num(restore.get('restored_files'))} 个 / {human_bytes(_num(restore.get('restored_bytes')))}；"
-            f"失败 {_num(restore.get('failed'))}。",
-        ))
+        restore_runs = [item for item in restore.get("runs") or [] if isinstance(item, dict)]
+        restore_last = restore.get("last_run") if isinstance(restore.get("last_run"), dict) else restore
+        detail = (
+            f"已恢复 {_num(restore.get('restored_files'))} 个 / "
+            f"{human_bytes(_num(restore.get('restored_bytes')))}（累计）"
+        )
+        if len(restore_runs) > 1:
+            detail += f"；最近一次恢复 {_num(restore_last.get('restored_files'))} 个"
+        detail += f"；失败 {_num(restore.get('failed'))}。"
+        steps.append(("恢复文件", detail))
     if not purge and not restore and mode == "quarantine":
         steps.append(("空间状态", "隔离区仍占用设备空间；尚未 purge 时 released_bytes=0 是正确结果。"))
     rows = "".join(
@@ -817,6 +833,7 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
         ])
     )
     failures = verification.get("failures") or []
+    checked = _num(summary.get("checked"))
     if failures:
         parts.append('<h3>验证异常</h3><div class="scroll"><table><thead><tr>'
                      '<th>路径</th><th>原因</th></tr></thead><tbody>')
@@ -828,6 +845,11 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
         parts.append("</tbody></table></div>")
         if len(failures) > 50:
             parts.append(f'<div class="note">另有 {len(failures) - 50} 条，见 verification.json。</div>')
+    elif checked <= 0:
+        parts.append(
+            '<div class="note">没有可验证项目：本次没有需要检查的隔离或删除记录'
+            "（例如相关文件已全部 purge 或恢复）。这不等于验证通过。</div>"
+        )
     else:
         parts.append('<div class="note">所有检查项通过。</div>')
     if verification.get("note"):
@@ -841,21 +863,38 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
     purge = execution.get("purge") or {}
     restore = execution.get("restore") or {}
     ex = execution.get("summary") or {}
+    qstate = execution.get("quarantine_state") or {}
+    remaining_files = qstate.get("remaining_files")
+    remaining_bytes = qstate.get("remaining_bytes")
+    if remaining_files is None:
+        remaining_files = ex.get("quarantine_files")
+    if remaining_bytes is None:
+        remaining_bytes = ex.get("quarantine_bytes")
     parts = ['<section id="release" class="block">', "<h2>隔离区、释放与恢复</h2>"]
 
     if mode == "quarantine":
         parts.append(
             _cards([
                 ("隔离区", execution.get("quarantine_root") or "-"),
-                ("隔离文件", f"{_num(ex.get('quarantine_files'))} 个"),
-                ("隔离占用", human_bytes(_num(ex.get("quarantine_bytes")))),
+                ("隔离文件", f"{_num(remaining_files)} 个"),
+                ("隔离占用", human_bytes(_num(remaining_bytes))),
                 ("电脑备份", f"{_num(ex.get('backup_files'))} 个 / {human_bytes(_num(ex.get('backup_bytes')))}"),
             ])
         )
-        parts.append(
-            '<div class="note">隔离区仍位于手机上，会继续占用空间；它不是电脑备份。'
-            "确认无误后再 purge。</div>"
-        )
+        if qstate and _num(remaining_files) == 0:
+            parts.append(
+                '<div class="note">隔离区已清空：本次记录中的隔离文件均已 purge 或恢复。</div>'
+            )
+        elif purge:
+            parts.append(
+                f'<div class="note">隔离区仍有 {_num(remaining_files)} 个文件'
+                f"（{human_bytes(_num(remaining_bytes))}）占用空间；已 purge 的文件无法恢复。</div>"
+            )
+        else:
+            parts.append(
+                '<div class="note">隔离区仍位于手机上，会继续占用空间；它不是电脑备份。'
+                "确认无误后再 purge。</div>"
+            )
     else:
         parts.append(
             '<div class="note warn">本次使用永久删除模式，文件不可恢复；'
@@ -863,15 +902,37 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
         )
 
     if purge:
+        purge_runs = [item for item in purge.get("runs") or [] if isinstance(item, dict)]
+        purge_last = purge.get("last_run") if isinstance(purge.get("last_run"), dict) else purge
+        cards = [
+            ("永久删除（累计）", f"{_num(purge.get('purged_files'))} 个"),
+            ("删除逻辑大小", human_bytes(_num(purge.get("purged_bytes")))),
+        ]
+        if len(purge_runs) > 1:
+            cards.append(("最近一次删除", f"{_num(purge_last.get('purged_files'))} 个"))
+        cards += [
+            ("失败", f"{_num(purge.get('failed'))}"),
+            ("可用空间变化", _signed_size(purge_last.get("free_delta"))),
+        ]
         parts.append('<h3>永久释放（purge）</h3>')
-        parts.append(
-            _cards([
-                ("永久删除", f"{_num(purge.get('purged_files'))} 个"),
-                ("删除逻辑大小", human_bytes(_num(purge.get("purged_bytes")))),
-                ("失败", f"{_num(purge.get('failed'))}"),
-                ("可用空间变化", _signed_size(purge.get("free_delta"))),
-            ])
-        )
+        parts.append(_cards(cards))
+        if _num(purge.get("missing_files")):
+            parts.append(
+                f'<div class="note">另有 {_num(purge.get("missing_files"))} 个隔离文件在 purge 前已不存在，'
+                "标记为 missing，未计入永久删除。</div>"
+            )
+        if len(purge_runs) > 1:
+            parts.append('<h3>purge 执行记录</h3><div class="scroll"><table><thead><tr>'
+                         '<th>时间</th><th class="r">删除</th><th class="r">逻辑大小</th>'
+                         '<th class="r">失败</th></tr></thead><tbody>')
+            for item in purge_runs:
+                parts.append(
+                    f'<tr><td>{_e(item.get("at") or "-")}</td>'
+                    f'<td class="r">{_num(item.get("purged_files"))}</td>'
+                    f'<td class="r">{human_bytes(_num(item.get("purged_bytes")))}</td>'
+                    f'<td class="r">{_num(item.get("failed"))}</td></tr>'
+                )
+            parts.append("</tbody></table></div>")
         purge_failures = purge.get("failures") or []
         if purge_failures:
             parts.append('<div class="scroll"><table><thead><tr>'
@@ -882,21 +943,36 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                     f'<td>{_e(failure.get("reason"))}</td></tr>'
                 )
             parts.append("</tbody></table></div>")
-    elif mode == "quarantine":
+    elif mode == "quarantine" and _num(remaining_files) > 0:
         parts.append(
             '<div class="note">尚未 purge：隔离文件仍占用设备空间，'
             f"released_bytes={human_bytes(_num(ex.get('released_bytes')))} 是正确结果。</div>"
         )
 
     if restore:
+        restore_runs = [item for item in restore.get("runs") or [] if isinstance(item, dict)]
+        restore_last = restore.get("last_run") if isinstance(restore.get("last_run"), dict) else restore
+        cards = [
+            ("已恢复（累计）", f"{_num(restore.get('restored_files'))} 个"),
+            ("恢复逻辑大小", human_bytes(_num(restore.get("restored_bytes")))),
+        ]
+        if len(restore_runs) > 1:
+            cards.append(("最近一次恢复", f"{_num(restore_last.get('restored_files'))} 个"))
+        cards.append(("失败", f"{_num(restore.get('failed'))}"))
         parts.append('<h3>恢复（restore）</h3>')
-        parts.append(
-            _cards([
-                ("已恢复", f"{_num(restore.get('restored_files'))} 个"),
-                ("恢复逻辑大小", human_bytes(_num(restore.get("restored_bytes")))),
-                ("失败", f"{_num(restore.get('failed'))}"),
-            ])
-        )
+        parts.append(_cards(cards))
+        if len(restore_runs) > 1:
+            parts.append('<h3>restore 执行记录</h3><div class="scroll"><table><thead><tr>'
+                         '<th>时间</th><th class="r">恢复</th><th class="r">逻辑大小</th>'
+                         '<th class="r">失败</th></tr></thead><tbody>')
+            for item in restore_runs:
+                parts.append(
+                    f'<tr><td>{_e(item.get("at") or "-")}</td>'
+                    f'<td class="r">{_num(item.get("restored_files"))}</td>'
+                    f'<td class="r">{human_bytes(_num(item.get("restored_bytes")))}</td>'
+                    f'<td class="r">{_num(item.get("failed"))}</td></tr>'
+                )
+            parts.append("</tbody></table></div>")
         restore_failures = restore.get("failures") or []
         if restore_failures:
             parts.append('<div class="scroll"><table><thead><tr>'
@@ -907,7 +983,7 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                     f'<td>{_e(failure.get("reason"))}</td></tr>'
                 )
             parts.append("</tbody></table></div>")
-    elif mode == "quarantine" and not purge:
+    elif mode == "quarantine" and not purge and _num(remaining_files) > 0:
         parts.append('<div class="note">如需恢复，可运行 <code>restore --all</code> 或按候选 ID 恢复。</div>')
 
     free_rows: list[tuple[str, str]] = []
@@ -921,7 +997,8 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
     if free_rows:
         free_rows.append(("执行期间变化", _signed_size(ex.get("df_delta_bytes"))))
         if purge:
-            free_rows.append(("purge 后变化", _signed_size(purge.get("free_delta"))))
+            purge_last = purge.get("last_run") if isinstance(purge.get("last_run"), dict) else purge
+            free_rows.append(("purge 后变化", _signed_size(purge_last.get("free_delta"))))
         parts.append('<h3>可用空间记录</h3><div class="scroll"><table><thead><tr>'
                      '<th>时间点</th><th class="r">可用空间</th></tr></thead><tbody>')
         for label, value in free_rows:
@@ -967,6 +1044,8 @@ def _cleanup_next(execution: dict[str, Any], verification: dict[str, Any]) -> st
     mode = str(execution.get("mode") or "")
     purge = execution.get("purge") or {}
     restore = execution.get("restore") or {}
+    qstate = execution.get("quarantine_state") or {}
+    remaining = qstate.get("remaining_files")
     parts = ['<section id="next" class="block">', "<h2>剩余问题与下一步</h2>"]
     items: list[str] = []
     if _num(ex.get("failed_files")):
@@ -975,12 +1054,21 @@ def _cleanup_next(execution: dict[str, Any], verification: dict[str, Any]) -> st
         items.append(f"验证有 {_num(verify.get('failed'))} 项异常，请先确认再继续清理或释放。")
     if execution.get("abort_reason"):
         items.append("执行曾经中止，未执行的项目保持原状。")
-    if mode == "quarantine" and not purge:
+    if mode == "quarantine" and not purge and (remaining is None or _num(remaining) > 0):
         items.append("隔离区仍占用设备空间；确认无需恢复后再运行 quarantine purge。")
     if purge:
         items.append("已永久删除的隔离文件无法恢复；restore 只会恢复仍留在隔离区的文件。")
     if restore:
-        items.append(f"已恢复 {_num(restore.get('restored_files'))} 个文件；隔离区剩余文件可继续恢复或 purge。")
+        if remaining is not None and _num(remaining) == 0:
+            items.append(
+                f"已累计恢复 {_num(restore.get('restored_files'))} 个文件；"
+                "本次记录中的隔离文件已全部回到原路径或已永久删除。"
+            )
+        else:
+            items.append(
+                f"已累计恢复 {_num(restore.get('restored_files'))} 个文件；"
+                "隔离区剩余文件可继续恢复或 purge。"
+            )
     if not items:
         items.append("本轮没有发现需要额外处理的问题。")
     parts.append("<ul>")
@@ -993,7 +1081,14 @@ def _cleanup_next(execution: dict[str, Any], verification: dict[str, Any]) -> st
         parts += [f"<li>{_e(item)}</li>" for item in warnings]
         parts.append("</ul></div>")
 
-    next_actions = execution.get("next_actions") or []
+    next_actions = [str(item) for item in (execution.get("next_actions") or [])]
+    if remaining is not None and _num(remaining) == 0:
+        # Nothing is left in quarantine; stale "purge/restore" suggestions
+        # would contradict the current state.
+        next_actions = [
+            item for item in next_actions
+            if "purge" not in item.lower() and "restore" not in item.lower()
+        ]
     if next_actions:
         parts.append('<div class="note"><strong>建议的后续命令</strong><ul>')
         parts += [f"<li>{_e(item)}</li>" for item in next_actions]

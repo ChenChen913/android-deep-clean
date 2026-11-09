@@ -261,6 +261,22 @@ def test_cleanup_html_without_verify_or_selection_degrades():
     assert "清理结果报告" in html
 
 
+def test_cleanup_html_zero_checks_is_not_reported_as_passed():
+    analysis, selection, execution, _ = _cleanup_bundle()
+    verification = {
+        "summary": {
+            "checked": 0, "passed": 0, "failed": 0,
+            "source_present": 0, "quarantine_missing": 0, "free_delta": 0,
+        },
+        "failures": [],
+        "note": "",
+    }
+    html = render_cleanup_html(analysis, selection, execution, verification)
+    assert "没有可验证项目" in html
+    assert "这不等于验证通过" in html
+    assert "所有检查项通过" not in html
+
+
 def test_execute_and_verify_write_cleanup_html(env):
     env.phone.file(CACHE + "/a.bin", size=300)
     env.phone.file(CACHE + "/b.bin", size=500)

@@ -1,13 +1,13 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.9.2，2026-11-09）
+## 当前版本摘要（v1.9.3，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.9.2 |
-| 本地 Mock | 247 passed / 1 skipped（248 collected） |
+| 验证对象 | 本地工作区 v1.9.3 |
+| 本地 Mock | 251 passed / 1 skipped（252 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 本轮改动 | 两份 HTML 报告改为纯白背景的苹果发布会风格 |
+| 本轮改动 | 修复重复 purge / 分批 restore 的执行记录失真，以及零检查项误报“全部通过” |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
 | 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
 | purge 真机结果 | 2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等（0 文件）；purge 后 restore 如实失败 |
@@ -23,6 +23,17 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.9.3 执行记录一致性修复（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `executor.py` 的 purge / restore / verify 记录逻辑、`html_report.py` 的累计与零检查项展示、CLI 文本输出 |
+| 重复 purge | 第二次执行 `purged_files=0`，`execution.purge.purged_files` 仍为累计 2；journal 保持 `purge_status=purged`，verify 不再产生虚假缺失 |
+| 恢复后 purge | `restore_status=restored` 的记录不再被改写为 `purge_status=missing` |
+| 分批 restore | 两次各恢复 1 个文件后，`execution.restore.restored_files=2`，`runs` 保留两次记录 |
+| 零检查项 | `checked=0` 时报告显示“没有可验证项目……这不等于验证通过”，不再显示“所有检查项通过” |
+| 自动化测试 | 全量 251 passed, 1 skipped（新增 4 个回归测试） |
 
 ### v1.9.2 苹果发布会风格（2026-11-09）
 

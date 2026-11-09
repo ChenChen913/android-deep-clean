@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.9.3 — 修复重复 purge / restore 的执行记录失真
+
+### Fixed
+- `quarantine purge` 重复执行时不再把已标记 `purged` 的记录改写成 `missing`；已恢复（`restore_status=restored`）的记录也不会被误标为隔离文件缺失。
+- purge 统计改为从 journal 汇总累计值：`execution.purge.purged_files/purged_bytes` 保留整个执行生命周期内真实永久删除数量，并新增 `runs`、`last_run` 与 `quarantine_state`。重复 purge 的本次结果仍为 0，但报告和历史记录不再归零。
+- `restore` 分批执行时同样保留每次记录与累计恢复数量（`runs` / `last_run`），不再只显示最后一次。
+- 清理结果 HTML 新增 purge / restore 执行记录表、累计数量与“隔离区剩余”状态；purge 后不再显示“隔离区仍占用空间，确认无误后再 purge”。
+- verify 在 `checked=0` 时明确显示“没有可验证项目……这不等于验证通过”，不再误报“所有检查项通过”。
+- purge / restore 重写 journal 改为原子写入，避免中途失败截断历史。
+- 新增 4 个回归测试：重复 purge、恢复后 purge、分批 restore、零检查项 HTML。
+
+### Notes
+- 全量 251 passed, 1 skipped（252 collected）。
+
 ## v1.9.2 — 报告改为苹果发布会风格
 
 ### Changed

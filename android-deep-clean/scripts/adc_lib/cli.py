@@ -639,7 +639,19 @@ def cmd_purge(args: Any, config: dict[str, Any]) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print("隔离区清理完成")
-        print(f"- 永久删除：{result.get('purged_files', 0)} 个 / {human_bytes(result.get('purged_bytes', 0))}")
+        print(f"- 本次永久删除：{result.get('purged_files', 0)} 个 / {human_bytes(result.get('purged_bytes', 0))}")
+        cumulative = result.get("cumulative") or {}
+        if cumulative and cumulative.get("purged_files") != result.get("purged_files"):
+            print(
+                f"- 累计永久删除：{cumulative.get('purged_files', 0)} 个 / "
+                f"{human_bytes(cumulative.get('purged_bytes', 0))}"
+            )
+        remaining = result.get("quarantine_remaining") or {}
+        if remaining:
+            print(
+                f"- 隔离区剩余：{remaining.get('remaining_files', 0)} 个 / "
+                f"{human_bytes(remaining.get('remaining_bytes', 0))}"
+            )
         print(f"- 失败：{result.get('failed', 0)}")
         print(f"- 可用空间变化：{human_bytes(result.get('free_delta', 0))}")
         print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
@@ -654,7 +666,19 @@ def cmd_restore(args: Any, config: dict[str, Any]) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print("恢复完成")
-        print(f"- 已恢复：{result.get('restored_files', 0)} 个 / {human_bytes(result.get('restored_bytes', 0))}")
+        print(f"- 本次恢复：{result.get('restored_files', 0)} 个 / {human_bytes(result.get('restored_bytes', 0))}")
+        cumulative = result.get("cumulative") or {}
+        if cumulative and cumulative.get("restored_files") != result.get("restored_files"):
+            print(
+                f"- 累计恢复：{cumulative.get('restored_files', 0)} 个 / "
+                f"{human_bytes(cumulative.get('restored_bytes', 0))}"
+            )
+        remaining = result.get("quarantine_remaining") or {}
+        if remaining:
+            print(
+                f"- 隔离区剩余：{remaining.get('remaining_files', 0)} 个 / "
+                f"{human_bytes(remaining.get('remaining_bytes', 0))}"
+            )
         print(f"- 失败：{result.get('failed', 0)}")
         print(f"- 可视化结果报告：{state.get_file('cleanup_report_html')}")
     return 0 if not result.get("failed") else 6

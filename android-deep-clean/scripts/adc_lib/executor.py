@@ -32,6 +32,7 @@ from .util import (
     SafetyError,
     ValidationError,
     atomic_write_json,
+    atomic_write_text,
     compute_files_digest,
     compute_plan_hash,
     compute_selection_hash,
@@ -688,6 +689,71 @@ def _load_optional_json(path_value: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _journal_totals(entries: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate durable outcomes from the journal.
+
+    ``purge`` and ``restore`` can run several times against the same
+    execution.  Totals must therefore come from the journal, not from the
+    counters of the latest invocation, otherwise a second (idempotent) run
+    would rewrite history as "0 files deleted" / "0 files restored".
+    """
+    totals = {
+        "purged_files": 0,
+        "purged_bytes": 0,
+        "missing_files": 0,
+        "restored_files": 0,
+        "restored_bytes": 0,
+    }
+    for entry in entries:
+        if entry.get("event") != "quarantined":
+            continue
+        size = int(entry.get("size") or 0)
+        if entry.get("purge_status") == "purged":
+            totals["purged_files"] += 1
+            totals["purged_bytes"] += size
+        elif entry.get("purge_status") == "missing":
+            totals["missing_files"] += 1
+        if entry.get("restore_status") == "restored":
+            totals["restored_files"] += 1
+            totals["restored_bytes"] += size
+    return totals
+
+
+def _quarantine_remaining(entries: list[dict[str, Any]]) -> dict[str, int]:
+    """Files that are still stored in the quarantine area."""
+    files = 0
+    size = 0
+    for entry in entries:
+        if entry.get("event") != "quarantined":
+            continue
+        if entry.get("purge_status") in {"purged", "missing"}:
+            continue
+        if entry.get("restore_status") == "restored":
+            continue
+        files += 1
+        size += int(entry.get("size") or 0)
+    return {"remaining_files": files, "remaining_bytes": size}
+
+
+def _previous_runs(record: Any, *, files_key: str, bytes_key: str) -> list[dict[str, Any]]:
+    """Return the recorded run history, upgrading an older single-run record."""
+    previous = record if isinstance(record, dict) else {}
+    runs = [item for item in previous.get("runs") or [] if isinstance(item, dict)]
+    if runs or not previous:
+        return runs
+    if int(previous.get(files_key) or 0) <= 0:
+        return runs
+    # execution.json written before run history existed only kept the last run.
+    return [{
+        "at": previous.get("at") or "",
+        files_key: int(previous.get(files_key) or 0),
+        bytes_key: int(previous.get(bytes_key) or 0),
+        "failed": int(previous.get("failed") or 0),
+        "failures": previous.get("failures") or [],
+        "free_delta": int(previous.get("free_delta") or 0),
+    }]
+
+
 def _write_cleanup_html(
     state: State,
     execution: dict[str, Any],
@@ -801,7 +867,11 @@ def verify(state: State, transport: Transport, config: dict[str, Any]) -> dict[s
         "free_before": execution.get("free_before"),
         "free_after_execution": execution.get("free_after"),
         "free_now": free_now,
-        "note": "隔离模式在 purge 前不会释放空间；负的 free_delta 可能是系统写入/日志造成。",
+        "note": (
+            "purge 已执行；可用空间变化受系统写入与日志影响，负值不一定是清理失败。"
+            if execution.get("purge")
+            else "隔离模式在 purge 前不会释放空间；负的 free_delta 可能是系统写入/日志造成。"
+        ),
     }
     out_dir = state.dir("execution")
     atomic_write_json(out_dir / "verification.json", verification)
@@ -823,17 +893,18 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
     if not token or not expected or not hmac.compare_digest(str(token), expected):
         raise SafetyError("purge 令牌不正确")
     journal_path = execution.get("journal_path") or ""
+    if not journal_path or not Path(journal_path).exists():
+        raise ValidationError("journal.jsonl 缺失，无法 purge")
     entries: list[dict[str, Any]] = []
-    if journal_path and Path(journal_path).exists():
-        with open(journal_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+    with open(journal_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     qroot = str(execution.get("quarantine_root") or "")
     all_roots = [str(root) for root in (execution.get("quarantine_roots") or []) if root]
     if qroot and qroot not in all_roots:
@@ -842,10 +913,21 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         raise SafetyError("execution 缺少 quarantine_root")
     purged = 0
     purged_bytes = 0
+    missing = 0
     failures: list[dict[str, str]] = []
     updated: list[dict[str, Any]] = []
     for entry in entries:
         if entry.get("event") != "quarantined":
+            updated.append(entry)
+            continue
+        if entry.get("purge_status") == "purged":
+            # Already permanently deleted by an earlier purge.  Keep the
+            # original record untouched so the history stays truthful.
+            updated.append(entry)
+            continue
+        if entry.get("restore_status") == "restored":
+            # The file was moved back to its original path; it is no longer
+            # in quarantine and must never be re-labelled as "missing".
             updated.append(entry)
             continue
         qpath = str(entry.get("quarantine_path") or "")
@@ -856,6 +938,7 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         current = transport.stat(qpath)
         if current is None:
             entry["purge_status"] = "missing"
+            missing += 1
             updated.append(entry)
             continue
         if current.kind != "file":
@@ -872,9 +955,10 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             failures.append({"path": qpath, "reason": str(exc)})
         updated.append(entry)
-    with open(journal_path, "w", encoding="utf-8") as fh:
-        for entry in updated:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    atomic_write_text(
+        journal_path,
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in updated),
+    )
     free_after = {}
     try:
         free_after = transport.df("/sdcard")
@@ -884,31 +968,66 @@ def purge(state: State, transport: Transport, token: str) -> dict[str, Any]:
     free_delta = 0
     if isinstance(free_after, dict) and isinstance(before, dict):
         free_delta = int(free_after.get("available_bytes") or 0) - int(before.get("available_bytes") or 0)
-    execution["purged_at"] = now_iso()
-    execution["purge"] = {
+    totals = _journal_totals(updated)
+    remaining = _quarantine_remaining(updated)
+    run_at = now_iso()
+    run = {
+        "at": run_at,
         "purged_files": purged,
         "purged_bytes": purged_bytes,
+        "missing_files": missing,
         "failed": len(failures),
         "failures": failures,
         "free_delta": free_delta,
         "free_after": free_after,
     }
+    runs = _previous_runs(execution.get("purge"), files_key="purged_files", bytes_key="purged_bytes")
+    runs.append(run)
+    execution["purged_at"] = run_at
+    execution["purge"] = {
+        # Cumulative truth from the journal: repeating purge must not erase
+        # what earlier runs actually deleted.
+        "purged_files": totals["purged_files"],
+        "purged_bytes": totals["purged_bytes"],
+        "missing_files": totals["missing_files"],
+        "failed": run["failed"],
+        "failures": run["failures"],
+        "free_delta": run["free_delta"],
+        "free_after": run["free_after"],
+        "last_run": run,
+        "runs": runs,
+    }
+    execution["quarantine_state"] = {**remaining, "updated_at": run_at}
     execution["status"] = "purged" if not failures else "partial"
     atomic_write_json(execution_path, execution)
     out_dir = state.dir("execution")
     lines = [
         "# 隔离区清理报告（purge）",
         "",
-        f"- 已永久删除隔离文件：{purged} 个 / {human_bytes(purged_bytes)}",
-        f"- 失败：{len(failures)}",
+        f"- 本次永久删除：{purged} 个 / {human_bytes(purged_bytes)}",
+        f"- 累计永久删除：{totals['purged_files']} 个 / {human_bytes(totals['purged_bytes'])}",
+        f"- 隔离区剩余：{remaining['remaining_files']} 个 / {human_bytes(remaining['remaining_bytes'])}",
+        f"- 本次失败：{len(failures)}",
         f"- 可用空间变化：{human_bytes(free_delta)}",
         "",
     ]
+    if missing:
+        lines.append(f"- 本次有 {missing} 个隔离文件在执行前已不存在，标记为 missing。")
+        lines.append("")
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")
     (out_dir / "report-purge.md").write_text("\n".join(lines), encoding="utf-8")
     _write_cleanup_html(state, execution)
-    return execution["purge"]
+    return {
+        **run,
+        "cumulative": {
+            "purged_files": totals["purged_files"],
+            "purged_bytes": totals["purged_bytes"],
+            "missing_files": totals["missing_files"],
+        },
+        "quarantine_remaining": remaining,
+        "runs": len(runs),
+    }
 
 
 def restore(state: State, transport: Transport, ids: list[str] | None, restore_all: bool) -> dict[str, Any]:
@@ -965,16 +1084,55 @@ def restore(state: State, transport: Transport, ids: list[str] | None, restore_a
             except Exception as exc:  # noqa: BLE001
                 failures.append({"path": source, "reason": str(exc)})
             entries.append(entry)
-    with open(journal_path, "w", encoding="utf-8") as fh:
-        for entry in entries:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    execution["restored_at"] = now_iso()
-    execution["restore"] = {"restored_files": restored, "restored_bytes": restored_bytes, "failed": len(failures), "failures": failures}
+    atomic_write_text(
+        journal_path,
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+    )
+    totals = _journal_totals(entries)
+    remaining = _quarantine_remaining(entries)
+    run_at = now_iso()
+    run = {
+        "at": run_at,
+        "restored_files": restored,
+        "restored_bytes": restored_bytes,
+        "failed": len(failures),
+        "failures": failures,
+    }
+    runs = _previous_runs(execution.get("restore"), files_key="restored_files", bytes_key="restored_bytes")
+    runs.append(run)
+    execution["restored_at"] = run_at
+    execution["restore"] = {
+        # Cumulative truth from the journal: restoring in several batches must
+        # not make the report forget the earlier batches.
+        "restored_files": totals["restored_files"],
+        "restored_bytes": totals["restored_bytes"],
+        "failed": run["failed"],
+        "failures": run["failures"],
+        "last_run": run,
+        "runs": runs,
+    }
+    execution["quarantine_state"] = {**remaining, "updated_at": run_at}
     atomic_write_json(execution_path, execution)
     out_dir = state.dir("execution")
-    lines = ["# 隔离区恢复报告", "", f"- 已恢复：{restored} 个 / {human_bytes(restored_bytes)}", f"- 失败：{len(failures)}", ""]
+    lines = [
+        "# 隔离区恢复报告",
+        "",
+        f"- 本次恢复：{restored} 个 / {human_bytes(restored_bytes)}",
+        f"- 累计恢复：{totals['restored_files']} 个 / {human_bytes(totals['restored_bytes'])}",
+        f"- 隔离区剩余：{remaining['remaining_files']} 个 / {human_bytes(remaining['remaining_bytes'])}",
+        f"- 本次失败：{len(failures)}",
+        "",
+    ]
     for failure in failures[:100]:
         lines.append(f"- {md_code(failure.get('path', ''))}：{failure.get('reason', '')}")
     (out_dir / "report-restore.md").write_text("\n".join(lines), encoding="utf-8")
     _write_cleanup_html(state, execution)
-    return execution["restore"]
+    return {
+        **run,
+        "cumulative": {
+            "restored_files": totals["restored_files"],
+            "restored_bytes": totals["restored_bytes"],
+        },
+        "quarantine_remaining": remaining,
+        "runs": len(runs),
+    }
