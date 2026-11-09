@@ -136,6 +136,26 @@ def test_media_path_case_difference_is_matched(env):
     assert cross["scan_only"] == 0
 
 
+def test_subset_scan_does_not_dilute_match_ratio(env):
+    """A Download-only scan must not look like a media-index failure."""
+    env.phone.file("/sdcard/Download/a.jpg", size=300)
+    env.phone.file("/sdcard/DCIM/Camera/b.jpg", size=400)
+    env.set_media_store(images=[
+        _row(1, "/storage/emulated/0/Download/a.jpg", size=300),
+        _row(2, "/storage/emulated/0/DCIM/Camera/b.jpg", size=400),
+    ])
+    env.ok("doctor")
+    env.ok("scan", "--roots", "/sdcard/Download")
+    analysis = env.ok("analyze").json()
+    cross = analysis["summary"]["media_index"]["crosscheck"]
+    assert cross["matched"] == 1
+    assert cross["index_only_in_scope"] == 0
+    assert cross["index_only_outside_scope"] == 1
+    assert cross["index_in_scope"] == 1
+    assert cross["match_ratio"] == 1.0
+    assert cross["index_scope_ratio"] == 0.5
+
+
 def test_media_store_crosscheck_and_report(env):
     env.phone.file(CAMERA + "/old.jpg", size=400)
     env.phone.file(CAMERA + "/mismatch.jpg", size=300)

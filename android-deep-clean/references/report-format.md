@@ -74,7 +74,7 @@
     "review_required": 5,
     "storage": {"coverage_status": "good", "file_scan": {}, "unexplained": {}, "media_index": {}, "app_storage": {}},
     "coverage": {"status": "good", "reasons": []},
-    "media_index": {"status": "partial", "index": {}, "crosscheck": {}},
+    "media_index": {"status": "partial", "index": {}, "crosscheck": {"match_ratio": 1.0, "index_in_scope": 133, "index_scope_ratio": 0.0268}},
     "app_storage": {"status": "collected", "known": {}, "unknown": {}, "top_external": []},
     "space_story": {"headline": "...", "items": [], "known_disjoint_human": "...", "unexplained_human": "...", "caveats": []},
     "directory_changes": {"baseline": false, "summary": {}, "grew": []}

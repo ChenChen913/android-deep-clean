@@ -1,20 +1,21 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.6.1，2026-11-09）
+## 当前版本摘要（v1.6.2，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.6.1 |
-| 本地 Mock | 234 passed / 1 skipped（235 collected） |
+| 验证对象 | 本地工作区 v1.6.2 |
+| 本地 Mock | 235 passed / 1 skipped（236 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 新增能力验证 | 空间去向速览 + 候选三问解释；recheck 平台误判修复；均完成 1 台真机只读验证 |
+| 新增能力验证 | 空间去向速览 + 候选三问解释；recheck 平台误判修复；限定目录匹配率修复；均完成真机只读验证 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
-| 本轮真机命令 | `recheck ×2`、`inspect`、`plan`、`select`、`archive diff/stats`、`export`、`scan --no-media --no-app-storage` |
+| 本轮真机命令 | `recheck ×2`、`inspect`、`inspect --pull`、`plan`、`select`、`archive diff/stats`、`export`、`scan --roots /sdcard/Download`、`scan --no-media --no-app-storage` |
+| 限定目录真机结果 | Download：648 条目 / 588 文件 / 384.60 MB；范围内索引 133 条全部匹配（100%）；范围外 4,834 条 |
 | recheck 修复验证 | 第二轮 `environment_changed=false`、`baseline=false`、`environment.platform=harmonyos_compat` |
 | 空间速览真机结果 | 设备已用 78.81 GB；文件扫描 11.08 GB（14.1%）；基础 APK 8.98 GB；已知不重叠 20.06 GB；未解释差额 58.75 GB |
 | MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配；`downloads` 集合不可用 |
 | 应用级存储真机结果 | 293 个应用，基础 APK 8.98 GB；49 个应用外部 data 合计 1.92 GB；内部 data/cache 未读取 |
-| 安全确认 | 未执行 execute/purge/restore；手机隔离区不存在；未生成 execution.json；select 令牌未使用 |
+| 安全确认 | 未执行 execute/purge/restore；手机隔离区不存在；未生成 execution.json；预览文件已删除 |
 | 真实设备清理/恢复 | 0 台完成正式验收 |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
 | 当前定位 | 只读链路与多数据源解释已在真实设备验证；**真实数据清理仍未验收，未达到正式清理工具门槛** |
@@ -22,6 +23,19 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.6.2 限定目录扫描与只读预览（2026-11-09）
+
+设备：HONOR HLK-AL00，HarmonyOS 3.0.0（Android 10 / SDK 29），shell 权限（无 root）。全程只读。
+
+| 项目 | 结果 |
+|---|---|
+| 限定根目录 | `scan --roots /sdcard/Download`：648 条目 / 588 文件 / 384.60 MB；覆盖率 good；最大目录为 Download 本身 |
+| 媒体索引范围 | 索引仍覆盖全盘 4,967 条（设计如此）；`index_in_scope=133`、`index_only_outside_scope=4,834` |
+| 匹配率修正 | 修复前 2.68%（被范围外条目稀释）；修复后范围内 100%；`index_scope_ratio=2.68%` |
+| inspect --pull | 只读拉取 2 个缩略图（396,068 B / 463,091 B）到电脑预览目录，核对后已删除 |
+| 降级 | `scan --no-media --no-app-storage`：两源 `disabled`、0 条，扫描仍 good |
+| 安全 | 未执行 execute/purge/restore；未生成 execution.json；手机隔离区不存在 |
 
 ### v1.6.1 recheck 平台误判修复与全链路只读回归（2026-11-09）
 

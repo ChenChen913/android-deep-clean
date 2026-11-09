@@ -111,7 +111,12 @@ def _media_lines(media: dict[str, Any]) -> list[str]:
         f"| 媒体库声明大小 | {index.get('bytes_human') or human_bytes(int(index.get('bytes') or 0))} | 索引字段 `_size`，不等于扫描大小 |",
         f"| 可解析路径 | {index.get('path_known', 0)} | 其余 {index.get('path_unknown', 0)} 条无法与文件路径核对 |",
         f"| 文件扫描中可找到 | {cross.get('found_in_scan', 0)} | "
-        + (f"匹配率 {float(ratio) * 100:.1f}%" if ratio is not None else "匹配率未知") + " |",
+        + (f"范围内匹配率 {float(ratio) * 100:.1f}%" if ratio is not None else "匹配率未知") + " |",
+        f"| 扫描范围内的索引条目 | {cross.get('index_in_scope', 0)} | "
+        + (
+            f"占全部可解析索引 {float(cross['index_scope_ratio']) * 100:.1f}%"
+            if cross.get("index_scope_ratio") is not None else "范围占比未知"
+        ) + " |",
         f"| 索引有、扫描无（范围内） | {cross.get('index_only_in_scope', 0)} | "
         "可能位于不可读区域、索引延迟或文件已移动；不能认定文件已删除 |",
         f"| 索引有、扫描无（范围外） | {cross.get('index_only_outside_scope', 0)} | 不在本轮扫描根目录内，无法核对 |",

@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.6.2 — 限定目录扫描不再稀释媒体匹配率
+
+### Fixed
+- 真机发现：只扫 `/sdcard/Download` 时，MediaStore 索引仍覆盖全盘，`match_ratio` 被算成 2.68%，看起来像索引大面积失效。现改为只按「扫描范围内的索引条目」计算，同场景为 100%。
+- 新增 `crosscheck.index_in_scope` 与 `crosscheck.index_scope_ratio`，分别表示范围内的索引条目数与它占全部可解析索引的比例；报告同步展示，避免误读。
+- 新增回归测试：限定根目录扫描时，范围内匹配率为 1.0，范围外条目计入 `index_only_outside_scope`。
+
+### Verified
+- 真机（HONOR HLK-AL00 / Android 10）限定根目录：
+  - `scan --roots /sdcard/Download`：648 条目 / 588 文件 / 384.60 MB，覆盖率 good；
+  - `analyze`：范围内索引 133 条，全部匹配（100%）；范围外 4,834 条；`index_scope_ratio=2.68%`；
+  - 媒体索引仍覆盖全盘（4,967 条），符合设计，不是错误。
+- 真机 `inspect --pull 2`：只读拉取 2 个缩略图预览到电脑并核对大小，随后已删除本地预览文件。
+- 全量 235 passed, 1 skipped。
+
 ## v1.6.1 — 修复 recheck 误判环境变化
 
 ### Fixed

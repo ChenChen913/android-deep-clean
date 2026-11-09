@@ -283,7 +283,9 @@ class MediaIndex:
             "index_only_outside_scope": 0,
             "path_unknown": 0,
             "found_bytes": 0,
+            "index_in_scope": 0,
             "match_ratio": None,
+            "index_scope_ratio": None,
             "scan_only": 0,
             "scan_only_bytes": 0,
             "samples": {"index_only": [], "index_only_outside": [], "size_mismatch": [], "scan_only": []},
@@ -299,8 +301,11 @@ class MediaIndex:
         unknown = counts.get("path_unknown", (0, 0))
         found = matched[0] + mismatch[0]
         found_bytes = matched[1] + mismatch[1]
-        known = found + index_only[0]
-        match_ratio = round(found / known, 4) if known else None
+        totals = db.execute(
+            "SELECT COUNT(*),COALESCE(SUM(CASE WHEN path='' THEN 1 ELSE 0 END),0) FROM media_items"
+        ).fetchone()
+        total_items = int(totals[0]) if totals else 0
+        path_known = total_items - int(totals[1]) if totals else 0
         try:
             case_mismatch = int(db.execute(
                 "SELECT COUNT(*) FROM media_items m WHERE m.in_scan=1 "
@@ -347,6 +352,11 @@ class MediaIndex:
                 f"媒体索引 {human_bytes(index_size)}，文件扫描 {human_bytes(scan_size)}；索引可能过期，以文件系统为准。",
             ))
         scan_only_count, scan_only_bytes = self._scan_only(db, samples)
+        # The match ratio must not be diluted by index rows that sit outside the
+        # scanned roots: a Download-only scan would otherwise look broken.
+        index_in_scope = found + in_scope
+        match_ratio = round(found / index_in_scope, 4) if index_in_scope else None
+        scope_ratio = round(index_in_scope / path_known, 4) if path_known else None
         return {
             "found_in_scan": found,
             "matched": matched[0],
@@ -357,7 +367,9 @@ class MediaIndex:
             "index_only_outside_scope": outside,
             "path_unknown": unknown[0],
             "found_bytes": found_bytes,
+            "index_in_scope": index_in_scope,
             "match_ratio": match_ratio,
+            "index_scope_ratio": scope_ratio,
             "scan_only": scan_only_count,
             "scan_only_bytes": scan_only_bytes,
             "samples": samples,
