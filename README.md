@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.9.3`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.9.4`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -271,6 +271,8 @@ python "$Skill\scripts\adc.py" restore --state $State --transport adb --serial $
 # 永久释放隔离区（不可恢复，需再次确认）
 python "$Skill\scripts\adc.py" quarantine purge --state $State --transport adb --serial $Serial --token <PURGE_TOKEN>
 ```
+
+purge 与 restore 在执行前都会核对隔离文件大小是否仍与 journal 记录一致；如果 execute 时使用了 `--backup-to`，还会用备份的 SHA-256 校验内容。隔离文件在隔离期间被替换或修改时，命令会拒绝操作并保留原文件，原因写入 journal 与报告。
 
 ### 手机端：Termux（--transport local）
 
@@ -609,7 +611,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.9.3 实测：251 passed, 1 skipped（252 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-09 / v1.9.4 实测：257 passed, 1 skipped（258 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

@@ -71,6 +71,7 @@ python android-deep-clean/scripts/adc.py <command> [common options] [command opt
 - 默认 quarantine；`--mode delete` 需要 `--allow-permanent-delete` 且 selection 只能含 SAFE。
 - 任何失败不得静默：写入 execution.json / journal / report。
 - 隔离区文件必须可 restore；purge 必须凭 execute 输出的 purge_token。
+- purge / restore 前必须校验隔离文件大小与 journal 记录一致；有 `backup_sha256` 时还要校验内容摘要；不一致则拒绝操作并记录原因。
 
 ## mock 设备目录与 JSON
 

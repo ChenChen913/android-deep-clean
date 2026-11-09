@@ -858,6 +858,34 @@ def _cleanup_verification(verification: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _run_failure_details(title: str, runs: list[dict[str, Any]]) -> str:
+    """Collapsible failure details for earlier purge/restore runs."""
+    blocks: list[str] = []
+    for index, run in enumerate(runs, start=1):
+        failures = run.get("failures") or []
+        if not failures:
+            continue
+        blocks.append(
+            '<details class="cand"><summary>'
+            f'<span class="ctitle">{_e(title)} 第 {index} 次 · {_e(run.get("at") or "-")}</span>'
+            f'<span class="csize">{len(failures)} 条失败</span>'
+            '</summary><div class="cbody">'
+            "<table><thead><tr><th>路径</th><th>原因</th></tr></thead><tbody>"
+        )
+        for failure in failures[:50]:
+            blocks.append(
+                f'<tr><td><code>{_e(failure.get("path"))}</code></td>'
+                f'<td>{_e(failure.get("reason"))}</td></tr>'
+            )
+        blocks.append("</tbody></table>")
+        if len(failures) > 50:
+            blocks.append(f'<div class="note">仅显示前 50 条；共 {len(failures)} 条。</div>')
+        blocks.append("</div></details>")
+    if not blocks:
+        return ""
+    return f'<h3>{_e(title)} 历史失败明细</h3>' + "".join(blocks)
+
+
 def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) -> str:
     mode = str(execution.get("mode") or "")
     purge = execution.get("purge") or {}
@@ -943,6 +971,10 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                     f'<td>{_e(failure.get("reason"))}</td></tr>'
                 )
             parts.append("</tbody></table></div>")
+            if len(purge_failures) > 30:
+                parts.append(f'<div class="note">另有 {len(purge_failures) - 30} 条，见 execution.json。</div>')
+        if len(purge_runs) > 1:
+            parts.append(_run_failure_details("purge", purge_runs[:-1]))
     elif mode == "quarantine" and _num(remaining_files) > 0:
         parts.append(
             '<div class="note">尚未 purge：隔离文件仍占用设备空间，'
@@ -983,6 +1015,10 @@ def _cleanup_release(execution: dict[str, Any], verification: dict[str, Any]) ->
                     f'<td>{_e(failure.get("reason"))}</td></tr>'
                 )
             parts.append("</tbody></table></div>")
+            if len(restore_failures) > 30:
+                parts.append(f'<div class="note">另有 {len(restore_failures) - 30} 条，见 execution.json。</div>')
+        if len(restore_runs) > 1:
+            parts.append(_run_failure_details("restore", restore_runs[:-1]))
     elif mode == "quarantine" and not purge and _num(remaining_files) > 0:
         parts.append('<div class="note">如需恢复，可运行 <code>restore --all</code> 或按候选 ID 恢复。</div>')
 

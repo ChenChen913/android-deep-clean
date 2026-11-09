@@ -1,13 +1,13 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.9.3，2026-11-09）
+## 当前版本摘要（v1.9.4，2026-11-09）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.9.3 |
-| 本地 Mock | 251 passed / 1 skipped（252 collected） |
+| 验证对象 | 本地工作区 v1.9.4 |
+| 本地 Mock | 257 passed / 1 skipped（258 collected） |
 | CI | 本次改动尚未推送运行；CI 矩阵仍为 ubuntu-22.04 / windows-latest × Python 3.9 / 3.13 |
-| 本轮改动 | 修复重复 purge / 分批 restore 的执行记录失真，以及零检查项误报“全部通过” |
+| 本轮改动 | purge / restore 增加隔离文件大小与可选 SHA-256 完整性校验；补旧记录迁移与历史失败明细 |
 | 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
 | 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
 | purge 真机结果 | 2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等（0 文件）；purge 后 restore 如实失败 |
@@ -23,6 +23,17 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.9.4 隔离文件完整性校验（2026-11-09）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `executor.py` 的 purge / restore 删除与恢复前校验、`_previous_runs()` 迁移、`html_report.py` 的历史失败明细 |
+| 大小校验 | 隔离文件被改成 500 B 后，purge / restore 均返回 rc=6，文件留在隔离区，原因含“大小已变化” |
+| 内容校验 | 启用 `--backup-to` 后，把隔离文件替换成同尺寸不同内容；purge / restore / verify 均因 SHA-256 不一致拒绝或报错 |
+| 迁移 | 旧 execution.json 中“成功 0 个、失败 1 个”的记录会迁移到 `runs`，不再丢失 |
+| 历史明细 | 多次 purge 后 HTML 出现可展开的“purge 历史失败明细”，含旧失败路径与原因 |
+| 自动化测试 | 全量 257 passed, 1 skipped（新增 6 个回归测试） |
 
 ### v1.9.3 执行记录一致性修复（2026-11-09）
 

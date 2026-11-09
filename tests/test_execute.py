@@ -770,3 +770,160 @@ def test_multiple_restore_runs_keep_cumulative_totals(env):
     assert "已恢复（累计）" in html
     assert "restore 执行记录" in html
     assert "隔离区已清空" in html
+
+
+def test_purge_refuses_quarantine_file_whose_size_changed(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+    stored[0].write_bytes(generated_bytes(500, seed="changed-size"))
+
+    result = _run_purge(env, execution["purge_token"])
+    result.expect_error(6)
+    payload = result.json()
+    assert payload["purged_files"] == 0
+    assert payload["failed"] == 1
+    assert "大小已变化" in payload["failures"][0]["reason"]
+    assert stored[0].exists(), "a changed quarantine file must never be deleted"
+    assert not env.phone.exists(path)
+    assert env.execution["purge"]["last_run"]["failed"] == 1
+    assert env.execution["status"] == "partial"
+
+
+def test_restore_refuses_quarantine_file_whose_size_changed(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    env.execute_ok()
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+    stored[0].write_bytes(generated_bytes(500, seed="changed-size"))
+
+    result = env.run("restore", "--all")
+    result.expect_error(6)
+    payload = result.json()
+    assert payload["restored_files"] == 0
+    assert payload["failed"] == 1
+    assert "大小已变化" in payload["failures"][0]["reason"]
+    assert stored[0].exists(), "a changed quarantine file must stay in quarantine"
+    assert not env.phone.exists(path)
+
+
+def test_purge_and_restore_refuse_quarantine_file_whose_content_changed(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+
+    execution = env.execution
+    entries = _quarantined_entries(env)
+    assert entries and entries[0].get("backup_sha256"), "backup hash is the content reference"
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+    stored[0].write_bytes(b"x" * 300)  # same size, different content
+
+    purged = _run_purge(env, execution["purge_token"])
+    purged.expect_error(6)
+    payload = purged.json()
+    assert payload["purged_files"] == 0
+    assert "SHA-256" in payload["failures"][0]["reason"]
+    assert stored[0].exists()
+
+    restored = env.run("restore", "--all")
+    restored.expect_error(6)
+    restore_payload = restored.json()
+    assert restore_payload["restored_files"] == 0
+    assert "SHA-256" in restore_payload["failures"][0]["reason"]
+    assert stored[0].exists()
+    assert not env.phone.exists(path)
+
+
+def test_verify_reports_quarantine_content_change(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    selection = env.select_all_safe()
+    backup_dir = env.tmp / "pc-backup"
+    env.run("execute", "--token", selection["token"], "--backup-to", str(backup_dir)).expect(0)
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+    stored[0].write_bytes(b"x" * 300)  # same size, different content
+
+    result = env.run("verify")
+    result.expect_error(6)
+    payload = result.json()
+    assert payload["summary"]["failed"] == 1
+    assert "SHA-256" in payload["failures"][0]["reason"]
+
+
+def test_purge_history_keeps_previous_failure_details(env):
+    path = CACHE + "/a.bin"
+    env.phone.file(path, size=300)
+    env.prepare_analysis()
+    env.plan_now(None)
+    env.select_all_safe()
+    execution = env.execute().json()
+    token = execution["purge_token"]
+    stored = quarantine_file_paths(env)
+    assert len(stored) == 1
+
+    stored[0].write_bytes(generated_bytes(500, seed="changed-size"))
+    failed = _run_purge(env, token)
+    failed.expect_error(6)
+    assert failed.json()["failed"] == 1
+    assert stored[0].exists()
+
+    stored[0].write_bytes(generated_bytes(300, seed=path))
+    retried = _run_purge(env, token)
+    retried.expect(0)
+    assert retried.json()["purged_files"] == 1
+    assert retried.json()["cumulative"]["purged_files"] == 1
+
+    execution = env.execution
+    runs = execution["purge"]["runs"]
+    assert len(runs) == 2
+    assert runs[0]["failed"] == 1
+    assert "大小已变化" in runs[0]["failures"][0]["reason"]
+    assert runs[1]["purged_files"] == 1
+    assert execution["purge"]["purged_files"] == 1
+
+    html = env.state_path("execution/report-cleanup.html").read_text(encoding="utf-8")
+    assert "purge 执行记录" in html
+    assert "purge 历史失败明细" in html
+    assert "大小已变化" in html
+
+
+def test_previous_runs_migrates_failed_only_record():
+    from adc_lib.executor import _previous_runs
+
+    runs = _previous_runs(
+        {
+            "purged_files": 0,
+            "purged_bytes": 0,
+            "failed": 1,
+            "failures": [{"path": "/sdcard/a", "reason": "old failure"}],
+        },
+        files_key="purged_files",
+        bytes_key="purged_bytes",
+        fallback_at="2026-01-01T00:00:00+08:00",
+    )
+    assert len(runs) == 1
+    assert runs[0]["at"] == "2026-01-01T00:00:00+08:00"
+    assert runs[0]["failed"] == 1
+    assert runs[0]["failures"][0]["reason"] == "old failure"
+    assert _previous_runs(
+        {"purged_files": 0, "failed": 0},
+        files_key="purged_files",
+        bytes_key="purged_bytes",
+    ) == []

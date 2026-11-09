@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.9.4 — purge / restore 增加隔离文件完整性校验
+
+### Fixed
+- `quarantine purge` 在永久删除前比较隔离文件当前大小与 journal 记录的隔离时大小；大小不一致时拒绝删除并记录原因。
+- `restore` 在把隔离文件移回原路径前执行同样的检查，避免把已被替换或修改的文件恢复回去。
+- 若执行时启用了 `--backup-to`，journal 中已有 `backup_sha256`；purge / restore / verify 会批量计算隔离文件 SHA-256 并与该内容基准比较，同尺寸内容替换也会被拒绝。设备缺少哈希工具或只有 md5 时退回大小校验，不会误判。
+- `_previous_runs()` 迁移旧版 execution.json 时，不再只看成功数量：成功 0 个但存在失败记录的旧 purge / restore 也会保留到 `runs`，并用 `purged_at` / `restored_at` 补时间。
+- HTML 报告为多次 purge / restore 增加可展开的历史失败明细；最新一次失败仍在主表中展示，并补充超过 30 条时的剩余数量提示。
+- 新增 6 个回归测试：purge / restore 大小变化、同尺寸内容替换、verify 内容变化、历史失败明细、旧失败记录迁移。
+
+### Notes
+- 全量 257 passed, 1 skipped（258 collected）。
+
 ## v1.9.3 — 修复重复 purge / restore 的执行记录失真
 
 ### Fixed
