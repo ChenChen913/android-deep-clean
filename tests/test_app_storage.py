@@ -207,3 +207,168 @@ def test_apk_permission_denied_is_explicit(env):
     assert entry["apk_bytes"] is None
     assert manifest["status"] in {"partial", "unavailable"}
     assert any("权限" in item or "permission" in item.lower() for item in manifest["limitations"])
+
+
+# ---------------------------------------------------------------- internal status
+# du prints a total for whatever it could read.  A permission error or an
+# unexplained non-zero exit must therefore downgrade the app, never be reported
+# as a complete measurement.
+
+
+def test_internal_partial_permission_keeps_data_but_marks_partial(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.set_caps(privilege="root", inaccessible=["/data/data/com.installed.app/cache"])
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["internal_status"] == "partial", "读到部分数据不等于完整采集"
+    assert entry["internal_data_bytes"] is not None, "已读到的有效数据必须保留"
+    assert "权限" in entry["internal_error"] or "Permission" in entry["internal_error"]
+    assert manifest["internal"]["status"] == "partial"
+    assert any("下限" in item for item in manifest["limitations"])
+
+
+def test_internal_command_failure_without_data_is_unavailable(env):
+    _setup(env)
+    env.set_caps(
+        privilege="root",
+        du_exit_code=1,
+        du_error="du: cannot access '/data/data/com.installed.app': Input/output error",
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["internal_status"] == "unavailable"
+    assert entry["internal_data_bytes"] is None
+    assert manifest["internal"]["status"] == "unavailable"
+
+
+def test_internal_command_failure_with_permission_is_denied(env):
+    _setup(env)
+    env.set_caps(
+        privilege="root",
+        du_exit_code=1,
+        du_error="du: cannot access '/data/data/com.installed.app': Permission denied",
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["internal_status"] == "permission_denied"
+    assert entry["internal_data_bytes"] is None
+    assert manifest["internal"]["status"] == "permission_denied"
+
+
+def test_internal_missing_optional_subdirs_stays_collected(env):
+    """A missing cache/code_cache is normal and must not fake a partial result."""
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.set_caps(
+        privilege="root",
+        du_exit_code=1,
+        du_error="du: cannot access '/data/data/com.installed.app/cache': No such file or directory",
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["internal_status"] == "collected"
+    assert entry["internal_data_bytes"] is not None
+    assert manifest["internal"]["status"] == "collected"
+
+
+# ---------------------------------------------------------------- base vs split APK
+# A readable split APK must never be counted as the base APK.
+
+
+def test_unreadable_base_apk_is_not_replaced_by_a_split(env):
+    split = "/data/app/com.installed.app/split_config.arm64_v8a.apk"
+    env.phone.file(APK, size=500)
+    env.phone.file(split, size=200)
+    env.set_packages(
+        installed=[PKG], uninstalled=[], system=["android"], available=True,
+        apk_paths={PKG: [APK, split]}, versions={PKG: "1.0"},
+    )
+    env.set_caps(inaccessible=[APK])
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["apk_base_bytes"] is None, "基础 APK 不可读时必须标记未知，不能用 split 顶替"
+    assert entry["apk_split_bytes"] == 200
+    assert entry["apk_bytes"] == 200
+    assert entry["status"] == "partial"
+    assert any("基础 APK 无法读取" in item for item in manifest["limitations"])
+    app = _app(env)
+    assert app["known"]["apk_base_bytes"] == 0
+    assert "合计为下限" in app["unknown"]["apk_base"]
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "合计为下限" in report
+    html = (env.state_dir / "analysis" / "report-before.html").read_text(encoding="utf-8")
+    assert "基础 APK：1 个应用的基础 APK 不可读" in html
+
+
+def test_split_only_package_keeps_base_unknown(env):
+    splits = [
+        "/data/app/com.installed.app/split_config.arm64_v8a.apk",
+        "/data/app/com.installed.app/split_config.xxhdpi.apk",
+    ]
+    for index, path in enumerate(splits):
+        env.phone.file(path, size=100 + index * 100)
+    env.set_packages(
+        installed=[PKG], uninstalled=[], system=["android"], available=True,
+        apk_paths={PKG: splits}, versions={PKG: "1.0"},
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["apk_base_bytes"] is None
+    assert entry["apk_split_bytes"] == 300
+    assert entry["apk_bytes"] == 300
+    assert entry["apk_file_count"] == 2
+    assert entry["status"] == "partial"
+
+
+def test_legacy_single_apk_without_base_name_is_the_base(env):
+    legacy = "/data/app/com.installed.app/com.installed.app-1.apk"
+    env.phone.file(legacy, size=500)
+    env.set_packages(
+        installed=[PKG], uninstalled=[], system=["android"], available=True,
+        apk_paths={PKG: [legacy]}, versions={PKG: "1.0"},
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["apk_base_bytes"] == 500
+    assert entry["apk_split_bytes"] == 0
+    assert entry["status"] == "ok"
+
+
+def test_vendor_bundle_without_base_name_is_recognised(env):
+    """Huawei system bundles list Settings.apk first, then feature splits.
+
+    ``pm path`` prints the base first, so the first listed file is the base even
+    when the vendor did not name it base.apk.  Splits must still be separated.
+    """
+    base_apk = "/system/priv-app/Settings/Settings.apk"
+    split_apk = "/system/priv-app/Settings/Resolution.apk"
+    env.phone.file(base_apk, size=1000)
+    env.phone.file(split_apk, size=200)
+    env.set_packages(
+        installed=[PKG], uninstalled=[], system=["android"], available=True,
+        apk_paths={PKG: [base_apk, split_apk]}, versions={PKG: "1.0"},
+    )
+    env.prepare_analysis()
+
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    entry = manifest["packages"][0]
+    assert entry["apk_base_bytes"] == 1000
+    assert entry["apk_split_bytes"] == 200
+    assert entry["apk_bytes"] == 1200
+    assert entry["status"] == "ok"

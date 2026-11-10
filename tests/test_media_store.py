@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from adc_lib.media_store import derive_media_path, parse_content_rows
 
 CAMERA = "/sdcard/DCIM/Camera"
@@ -365,3 +367,108 @@ def test_sort_option_falls_back_without_sort(env):
     assert images["rows"] == 1
     assert images["attempts"] >= 2
     assert "--sort" not in images["command"]
+
+
+# ---------------------------------------------------------------- zero-row matrix
+# 0 rows only means "empty" when the filesystem scan found nothing at all.
+# A handful of files is inconclusive, not empty and not an anomaly.
+
+
+@pytest.mark.parametrize(
+    "file_count,expected",
+    [
+        (0, "empty"),
+        (1, "zero_unconfirmed"),
+        (9, "zero_unconfirmed"),
+        (10, "zero_mismatch"),
+    ],
+)
+def test_zero_row_threshold_matrix(env, file_count, expected):
+    for index in range(file_count):
+        env.phone.file(CAMERA + f"/photo-{index}.jpg", size=300 + index)
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
+    env.prepare_analysis()
+
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["scan_files"] == file_count
+    assert images["status"] == expected
+
+    crosscheck = manifest["crosscheck"]
+    if expected == "empty":
+        assert "images" in crosscheck["empty"]
+        assert crosscheck["zero_unconfirmed"] == []
+    elif expected == "zero_unconfirmed":
+        assert crosscheck["zero_unconfirmed"] == ["images"]
+        assert crosscheck["zero_mismatch"] == []
+        assert manifest["status"] == "collected"
+        assert "无法确认为空" in manifest["reason"]
+        assert any("既不认定为空" in item for item in manifest["limitations"])
+    else:
+        assert crosscheck["zero_mismatch"] == ["images"]
+        assert manifest["status"] == "partial"
+
+
+def test_zero_unconfirmed_is_reported_in_markdown_and_html(env):
+    env.phone.file(CAMERA + "/only-one.jpg", size=300)
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
+    env.prepare_analysis()
+
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "0 条（少量文件，无法确认）" in report
+    assert "零记录待确认" in report
+    html = (env.state_dir / "analysis" / "report-before.html").read_text(encoding="utf-8")
+    assert "零记录待确认" in html
+    assert "无法确认" in html
+
+
+# ---------------------------------------------------------------- hidden paths
+# MediaStore does not index paths containing a hidden component, so the count
+# uses the same rule; the excluded number is disclosed instead of disappearing.
+
+
+def test_hidden_directory_media_does_not_fake_a_mismatch(env):
+    for index in range(10):
+        env.phone.file(f"/sdcard/DCIM/.private/photo-{index}.jpg", size=300 + index)
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
+    env.prepare_analysis()
+
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["scan_files"] == 0, "隐藏目录的媒体不应计入与 MediaStore 的核对"
+    assert images["status"] == "empty", "隐藏目录里的文件不能把 0 条记录放大成 zero_mismatch"
+    assert manifest["crosscheck"]["hidden_excluded"]["images"] == 10
+    assert any("位于隐藏目录" in item for item in manifest["limitations"])
+
+
+def test_hidden_exclusions_are_reported_not_silent(env):
+    env.phone.file("/sdcard/DCIM/.private/photo.jpg", size=300)
+    env.phone.file("/sdcard/DCIM/Camera/visible.jpg", size=300)
+    env.set_media_store(
+        images=[_row(1, "/storage/emulated/0/DCIM/Camera/visible.jpg", size=300)],
+        video=[], audio=[], downloads=[],
+    )
+    env.prepare_analysis()
+
+    manifest = _manifest(env)
+    images = next(item for item in manifest["collections"] if item["name"] == "images")
+    assert images["scan_files"] == 1
+    assert images["status"] == "ok"
+    assert manifest["crosscheck"]["hidden_excluded"]["images"] == 1
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "未参与零记录核对" in report
+
+
+def test_thumbnails_and_trashed_files_stay_out_of_counts(env):
+    env.phone.file("/sdcard/DCIM/.thumbnails/thumb-1.jpg", size=100)
+    env.phone.file("/sdcard/DCIM/Camera/.trashed-1699999999-old.jpg", size=100)
+    env.phone.file("/sdcard/DCIM/Camera/visible.jpg", size=300)
+    env.set_media_store(
+        images=[_row(1, "/storage/emulated/0/DCIM/Camera/visible.jpg", size=300)],
+        video=[], audio=[], downloads=[],
+    )
+    env.prepare_analysis()
+
+    images = next(item for item in _manifest(env)["collections"] if item["name"] == "images")
+    assert images["scan_files"] == 1
+    assert images["status"] == "ok"

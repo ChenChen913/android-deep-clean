@@ -88,3 +88,17 @@ def test_space_story_degrades_without_app_storage(env):
     assert "app_apk" not in keys
     assert story["known_disjoint_bytes"] == 800
     assert any("APK" in item for item in story["caveats"])
+
+
+def test_space_story_marks_partial_internal_as_lower_bound(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.set_caps(privilege="root", inaccessible=["/data/data/com.installed.app/cache"])
+    env.prepare_analysis()
+
+    story = env.analysis["summary"]["space_story"]
+    items = {item["key"]: item for item in story["items"]}
+    assert "下限" in items["app_internal"]["measure"], "部分采集不能被写成完整口径"
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "数值为下限" in report

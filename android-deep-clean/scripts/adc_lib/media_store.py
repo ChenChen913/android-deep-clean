@@ -293,11 +293,12 @@ class MediaStoreCollector:
             if len(raw) > self.max_items:
                 raw = raw[: self.max_items]
                 truncated = True
-        scan_counts = self._scan_counts()
+        scan_counts, hidden_counts = self._scan_counts()
         threshold = max(1, int(self.settings.get("zero_crosscheck_min_files") or 10))
         if not scan_counts:
             limitations.append("无法读取文件扫描快照，未做 MediaStore 零记录交叉核对。")
         zero_mismatch: list[str] = []
+        zero_unconfirmed: list[str] = []
         empty_collections: list[str] = []
         for info in collection_info:
             name = str(info.get("name") or "")
@@ -317,29 +318,60 @@ class MediaStoreCollector:
                     f"{info.get('label') or name}媒体索引返回 0 条，但文件扫描发现 {scan_count} 个同类文件；"
                     "不能据此认为媒体库为空。"
                 )
-            else:
+            elif scan_count == 0:
+                # Only a scan that found nothing at all can support "empty".
                 info["status"] = "empty"
                 info["crosscheck"] = "no_scan_files"
                 empty_collections.append(name)
+            else:
+                # 0 rows with a few files on disk proves nothing: the index may
+                # be filtered, delayed or permission-limited.  Keep it
+                # inconclusive instead of claiming the library is empty.
+                info["status"] = "zero_unconfirmed"
+                info["crosscheck"] = "scan_has_few_files"
+                info["error"] = (
+                    f"查询成功但返回 0 条；文件扫描只发现 {scan_count} 个同类文件"
+                    f"（低于异常阈值 {threshold}），无法确认媒体库为空"
+                )
+                zero_unconfirmed.append(name)
+                limitations.append(
+                    f"{info.get('label') or name}媒体索引返回 0 条，文件扫描发现 {scan_count} 个同类文件"
+                    f"（低于阈值 {threshold}）；既不认定为空，也不判定为异常。"
+                )
         crosscheck = {
             "threshold": threshold,
             "scan_files": scan_counts,
+            "hidden_excluded": hidden_counts,
             "zero_mismatch": zero_mismatch,
+            "zero_unconfirmed": zero_unconfirmed,
             "empty": empty_collections,
-            "note": "零记录不直接判失败；只有文件扫描发现同类文件达到阈值时才标记异常。",
+            "note": (
+                "零记录不直接判失败：文件扫描未发现同类文件才算空，达到阈值才算异常，"
+                "介于两者之间标记为无法确认。隐藏目录不参与核对（MediaStore 不索引），"
+                "其数量单独列出。"
+            ),
         }
+        hidden_total = sum(int(value or 0) for value in hidden_counts.values())
+        if hidden_total:
+            limitations.append(
+                f"另有 {hidden_total} 个同类文件位于隐藏目录（缩略图、应用缓存、私密目录等），"
+                "MediaStore 不索引这些路径，未参与零记录核对。"
+            )
         records = _merge_records(raw)
-        if truncated or any(item.get("status") == "failed" for item in collection_info):
+        failed_collections = [item for item in collection_info if item.get("status") == "failed"]
+        usable_collections = [
+            item for item in collection_info
+            if item.get("status") in {"ok", "empty", "zero_mismatch", "zero_unconfirmed"}
+        ]
+        if truncated or failed_collections:
             limitations.append("媒体索引只完成部分采集；缺失集合不会影响文件扫描结果。")
-        if any(item.get("status") == "failed" for item in collection_info):
-            status = "partial" if any(
-                item.get("status") in {"ok", "empty", "zero_mismatch"} for item in collection_info
-            ) else "unavailable"
+        if failed_collections:
+            status = "partial" if usable_collections else "unavailable"
             reason = "部分媒体集合不可用" if status == "partial" else "所有媒体集合均不可用"
         elif zero_mismatch:
             status = "partial"
             reason = "部分媒体集合查询成功但返回 0 条，与文件扫描不一致"
-        elif not any(item.get("status") in {"ok", "empty"} for item in collection_info):
+        elif not usable_collections:
             status = "unavailable"
             reason = "没有可采集的媒体集合"
         elif truncated:
@@ -348,6 +380,9 @@ class MediaStoreCollector:
         elif all(item.get("status") in {"empty", "skipped"} for item in collection_info):
             status = "collected"
             reason = "查询成功；所有集合均为 0 条（可能是空媒体库）"
+        elif zero_unconfirmed:
+            status = "collected"
+            reason = "查询成功；部分集合返回 0 条，但文件扫描发现少量同类文件，无法确认为空"
         else:
             status = "collected"
             reason = ""
@@ -358,39 +393,60 @@ class MediaStoreCollector:
             limitations=limitations, truncated=truncated, crosscheck=crosscheck,
         )
 
-    def _scan_counts(self) -> dict[str, int]:
-        """Count same-kind files in the filesystem snapshot for zero-row checks."""
+    def _scan_counts(self) -> tuple[dict[str, int], dict[str, int]]:
+        """Count same-kind files for zero-row checks, plus the hidden ones.
+
+        MediaStore does not index any path that contains a hidden component
+        (verified on HLK-AL00 / Android 10: ``content query`` returns no result
+        for images under ``.cache`` / ``.thumbnails`` / ``.gs``).  The count
+        therefore uses the same rule -- otherwise generated previews and
+        private/system directories would show up as phantom "index missing"
+        files and a working index could be misjudged as broken.
+
+        Hidden files are not silently dropped: the second return value reports
+        how many were excluded, and the report discloses that number.
+        """
         db_path = self.state.dir("scan") / "snapshot.db"
         if not db_path.exists():
-            return {}
+            return {}, {}
         try:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         except sqlite3.Error:
-            return {}
+            return {}, {}
         try:
-            def count_exts(exts: set[str]) -> int:
+            def count_exts(exts: set[str], hidden: bool) -> int:
                 placeholders = ",".join("?" for _ in exts)
+                hidden_clause = "AND path LIKE '%/.%'" if hidden else "AND path NOT LIKE '%/.%'"
                 row = conn.execute(
                     "SELECT COUNT(*) FROM entries WHERE kind='file' "
                     "AND path LIKE '/sdcard/%' AND path NOT LIKE '/sdcard/Android/%' "
-                    "AND path NOT LIKE '%/.%' "
+                    f"{hidden_clause} "
                     f"AND lower(ext) IN ({placeholders})",
                     tuple(sorted(exts)),
                 ).fetchone()
                 return int(row[0]) if row else 0
 
-            downloads = conn.execute(
-                "SELECT COUNT(*) FROM entries WHERE kind='file' "
-                "AND path LIKE '/sdcard/Download/%' AND path NOT LIKE '%/.%'"
-            ).fetchone()
-            return {
-                "images": count_exts(IMAGE_EXTS),
-                "video": count_exts(VIDEO_EXTS),
-                "audio": count_exts(AUDIO_EXTS),
-                "downloads": int(downloads[0]) if downloads else 0,
+            def count_downloads(hidden: bool) -> int:
+                hidden_clause = "AND path LIKE '%/.%'" if hidden else "AND path NOT LIKE '%/.%'"
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM entries WHERE kind='file' "
+                    "AND path LIKE '/sdcard/Download/%' "
+                    f"{hidden_clause}"
+                ).fetchone()
+                return int(row[0]) if row else 0
+
+            collections = {
+                "images": IMAGE_EXTS,
+                "video": VIDEO_EXTS,
+                "audio": AUDIO_EXTS,
             }
+            visible = {name: count_exts(exts, False) for name, exts in collections.items()}
+            visible["downloads"] = count_downloads(False)
+            hidden_counts = {name: count_exts(exts, True) for name, exts in collections.items()}
+            hidden_counts["downloads"] = count_downloads(True)
+            return visible, hidden_counts
         except sqlite3.Error:
-            return {}
+            return {}, {}
         finally:
             conn.close()
 

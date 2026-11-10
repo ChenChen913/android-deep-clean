@@ -28,6 +28,7 @@ _COLLECTION = {"images": "图片", "video": "视频", "audio": "音频", "downlo
 _MEDIA_COLLECTION_STATUS = {
     "ok": ("正常", "safe"),
     "empty": ("0 条（未发现同类文件）", "caution"),
+    "zero_unconfirmed": ("0 条（少量文件，无法确认）", "caution"),
     "zero_mismatch": ("0 条但与扫描不一致", "danger"),
     "failed": ("失败", "danger"),
     "skipped": ("跳过", "caution"),
@@ -300,6 +301,17 @@ def _media_section(media: dict[str, Any]) -> str:
             f"<p>{_e(names)} 的媒体索引返回 0 条，但文件扫描发现同类文件。"
             "不能认定媒体库为空；请检查权限、Provider 状态或索引是否延迟。</p></div>"
         )
+    if collection_cross.get("zero_unconfirmed"):
+        names = "、".join(
+            _COLLECTION.get(str(name), str(name))
+            for name in collection_cross.get("zero_unconfirmed") or []
+        )
+        threshold = collection_cross.get("threshold") or 10
+        parts.append(
+            f'<div class="note"><strong>零记录待确认</strong>'
+            f"<p>{_e(names)} 的媒体索引返回 0 条，文件扫描只发现少量同类文件"
+            f"（低于异常阈值 {_num(threshold)}）。既不能认定媒体库为空，也不判定为异常。</p></div>"
+        )
     if not media.get("available"):
         parts.append('<div class="note">媒体索引不可用不影响文件扫描结果，但本轮无法解释媒体库与文件系统的差异。</div>')
         parts.append("</section>")
@@ -357,7 +369,7 @@ def _app_section(app: dict[str, Any]) -> str:
         "<h2>应用级存储（部分口径）</h2>",
         f'<p class="lead">状态：{_e(_MEDIA_STATUS.get(status, status))}'
         + (f"（{_e(app.get('reason'))}）" if app.get("reason") else "")
-        + "；内部 data/cache 与 split APK 未计入。</p>",
+        + "；内部 data 仅在 root/su 下由只读 du 抽样统计，split APK 受查询上限约束。</p>",
     ]
     if app.get("available"):
         parts.append('<div class="grid stats">')
@@ -376,6 +388,8 @@ def _app_section(app: dict[str, Any]) -> str:
         unknown = app.get("unknown") or {}
         if unknown.get("split_apk"):
             parts.append(f'<div class="note">Split APK：{_e(unknown.get("split_apk"))}；共 {_num(known.get("apk_file_count"))} 个 APK 文件。</div>')
+        if unknown.get("apk_base"):
+            parts.append(f'<div class="note">基础 APK：{_e(unknown.get("apk_base"))}；split APK 单独统计，不折算进基础 APK。</div>')
         if unknown.get("internal_data"):
             parts.append(f'<div class="note">内部 data：{_e(unknown.get("internal_data"))}；内部 cache 是 data 的子集。</div>')
         top = app.get("top_external") or []

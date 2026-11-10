@@ -124,7 +124,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序
 
 v1.4.0 起，scan 默认尝试只读查询 Android MediaStore（images/video/audio/downloads），结果写到主机侧 `scan/aux/sources.json` 与 `scan/aux/media-index.jsonl`。该索引只用于与文件扫描交叉验证；`--no-media` 可关闭。HarmonyOS NEXT 不使用 Android MediaStore，状态为 `unsupported`；ADB shell/Shizuku 不需要 Root，Termux local 通常无媒体权限并会降级。
 
-v1.5.0 起，scan 还会用 `pm list packages -f` + 批量 `stat` 读取每个已安装应用的基础 APK 大小，写入 `scan/aux/app-storage.json`；`--no-app-storage` 可关闭。它不读取应用内部 data/cache，不使用 Root，也不使用会写系统缓存的 `dumpsys diskstats`。内部 data/cache 与 split APK 明确标记为未知，不能当作完整应用占用。
+v1.5.0 起，scan 还会用 `pm list packages -f` + 批量 `stat` 读取每个已安装应用的基础 APK 大小，写入 `scan/aux/app-storage.json`；`--no-app-storage` 可关闭。它不使用会写系统缓存的 `dumpsys diskstats`。内部 data/cache 只在 root/su 且存在 `du` 时按上限只读统计，普通 shell 明确标记为不可读；split APK 查询受应用数量上限约束，两者都不能当作完整应用占用。
 
 跨轮档案：
 
@@ -360,7 +360,7 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 - local 通路在 proot/容器中不会被误判为 Android Root；容器里能读 Android/data 也不代表 scoped storage 下普通应用可读。
 - HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；不使用 Android MediaStore；`bm clean` 未接入执行器。
 - MediaStore 媒体索引依赖 `content query`，可用性受 shell 权限、OEM、Android 版本影响；已在 1 台 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）完成只读验证，该 ROM 的 `downloads` 集合不可用，更多机型仍需验收。索引延迟、多用户、工作资料、隐藏目录、部分 SD 卡卷和路径大小写差异会造成核对差异；索引缺失或差异不得作为删除依据。
-- 应用级存储只统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 不可读/未计入。已知合计不是应用总占用，不能与设备已用空间相加，也不能据此认定某个应用“占用异常”。
+- 应用级存储只统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 仅在 root/su、`du` 与 `pm path` 可用时按上限采集。内部 data 的 `collected` 表示 `du` 完整成功，出现权限错误或无法解释的非零退出只标记 `partial`（数值是下限）；基础 APK 不可读时 `apk_base_bytes` 为未知，不能用 split APK 顶替。已知合计不是应用总占用，不能与设备已用空间相加，也不能据此认定某个应用“占用异常”。
 - HarmonyOS NEXT/兼容版的 hdc/adb 真机行为尚未验证；mock 通过不等于真机通过。
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；不能把“未访问”当唯一证据。
 - 无法识别所有应用私有格式/加密缓存；未知内容一律保留。

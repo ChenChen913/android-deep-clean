@@ -393,7 +393,8 @@ Host-side output:
 - `scan_only`: in the file snapshot but not in the index; may be unindexed, hidden or app-private media. **Not an anomaly.**
 - `size_mismatch`: the index may be stale; filesystem wins.
 - `trashed` / `pending`: index state hints only.
-- **Zero-row diagnosis**: each collection is `ok` / `empty` / `zero_mismatch` / `failed` / `skipped`. A successful query with 0 rows is `zero_mismatch` when the filesystem scan found at least the threshold (default 10) of same-kind files; the overall status becomes `partial` and the report says the media library must not be treated as empty. With no same-kind files it is `empty`, not a failure.
+- **Zero-row diagnosis**: each collection is `ok` / `empty` / `zero_unconfirmed` / `zero_mismatch` / `failed` / `skipped`. A successful query with 0 rows has three outcomes: no same-kind files scanned -> `empty` (not a failure); 1 to threshold-1 same-kind files -> `zero_unconfirmed` (cannot prove the library is empty, and not an anomaly); at least the threshold (default 10) -> `zero_mismatch`, the overall status becomes `partial` and the report says the library must not be treated as empty.
+- Zero-row cross-checking mirrors what MediaStore actually indexes: media whose path contains a hidden component (`/.xxx`) is not counted, because MediaStore does not index those paths (verified on a real device: `content query` returns no result for images under `.cache`, `.thumbnails` and `.gs`). The excluded count is reported in `crosscheck.hidden_excluded` and in the limitations, never silently dropped.
 - `sources.json` records the actual command, projection, exit code, stderr, row count, attempts and elapsed time for diagnosis.
 
 The media index is evidence only. It never creates candidates, changes risk or selectability, and its size is not added to the file-scan total.
@@ -417,6 +418,8 @@ It runs `pm list packages -f`, a bounded number of `pm path <package>` calls (de
 - Conditionally known: app-internal data/cache/code_cache via read-only `du` under root/su (default up to 60 apps, prioritising large external-data packages).
 - Unknown/partial: internal data under a plain shell, apps beyond the split-query budget, and paths that are missing, permission-denied or fail `stat`.
 - Statuses distinguish `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`; unknown data is never written as 0 MB.
+- The base APK is `base.apk` when present. Vendor system apps that use another name (e.g. Huawei `Settings.apk` / `*_signed_entry.apk`) fall back to the first non-`split_*` entry in `pm path` order. When the base is unreadable, `apk_base_bytes` stays unknown and is **never replaced by a readable split**; readable splits are summed into `apk_split_bytes` only.
+- Internal `collected` means `du` completed cleanly. A permission error or an unexplained non-zero exit marks the app `partial` even when some data was read: the value is a lower bound and the report says so. Missing `cache`/`code_cache` directories are normal and do not downgrade the result.
 - Lists top apps by external storage and uninstalled packages that still have external directories.
 - App-related candidates gain package-level evidence only; risk and selectability do not change.
 
@@ -595,7 +598,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-10 / v1.10.1: 302 passed, 2 skipped (304 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
+Measured on 2026-11-10 / v1.10.2: 319 passed, 2 skipped (321 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -642,7 +645,7 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - The directory archive is path-based: a rename appears as "missing + new". Incomplete scans and environment changes suppress vanished conclusions.
 - The archive tracks directories ≥10 MiB and app directories by default; app-version detection needs `pm list packages --show-versioncode`.
 - The directory archive and coverage changes have not been accepted on a real device.
-- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan and only become `zero_mismatch` when the same-kind file count reaches the threshold.
+- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan: at least the threshold of same-kind files becomes `zero_mismatch`, 1 to threshold-1 becomes `zero_unconfirmed` (cannot prove empty), and no same-kind files becomes `empty`. Hidden paths are excluded because MediaStore does not index them, and the excluded count is reported separately.
 - App-level storage: base APKs need no root; split-APK discovery has an app budget; internal data/cache are only sampled with read-only `du` under root/su. Plain shells are explicitly marked unavailable. `dumpsys diskstats` is not used because it writes a system cache; no StorageStatsManager helper APK is included.
 - Hidden/special caches are matched only by name/extension plus an allowed root, and every such candidate is CAUTION/review-required. Vendor top-level directories may contain user data and are not auto-classified as cache.
 - Scan coverage follows `find` stderr: a locked subdirectory downgrades coverage to `partial` and is listed by path. `doctor` samples at most 6 `Android/data` app folders, so unsampled apps can still be under-counted; the report never claims completeness for them.
@@ -656,8 +659,8 @@ Real-device status:
 | Item | Status |
 |---|---|
 | Read-only on a real device (local + ADB) | 1 device passed: HONOR HLK-AL00, HarmonyOS 3.0 compat / Android 10 |
-| MediaStore read-only index | 1 device passed: HONOR HLK-AL00; images/video/audio available, `downloads` unavailable on this ROM; 4,964 of 4,965 rows matched, 0 in-scope missing |
-| App-level storage (partial) | 1 device passed: HONOR HLK-AL00; 293 apps, 8.98 GB base APKs, 1.92 GB external data; internal data/cache not read |
+| MediaStore read-only index | 1 device passed: HONOR HLK-AL00; images/video/audio available, `downloads` unavailable on this ROM; 4,963 rows, 158 scan-only paths (not indexed or hidden, not an anomaly) |
+| App-level storage (partial) | 1 device passed: HONOR HLK-AL00; 293 apps, 9.00 GB base APKs, 20.78 MB splits (120 apps queried within budget), 2.15 GB external data; internal data/cache not read (no root) |
 | Quarantine / verify / restore | 1 device passed, self-created test files only |
 | Cleanup of real user data | 0 devices accepted |
 | Permanent delete (purge) | 1 device passed: two self-created test files (30 B); wrong token refused |

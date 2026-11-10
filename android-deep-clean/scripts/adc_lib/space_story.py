@@ -103,7 +103,8 @@ def build_space_story(
             "key": "app_internal",
             "label": "应用内部 data",
             "bytes": internal_bytes if internal_available else 0,
-            "measure": "只读 du（/data/data，含 cache/code_cache）",
+            "measure": "只读 du（/data/data，含 cache/code_cache）"
+            + ("；部分应用仅可读部分，数值为下限" if internal_status == "partial" else ""),
             "scope": "root/su 下按应用抽样统计，不是全量",
             "relation": "disjoint-with-file-scan",
             "note": "不在 /sdcard 扫描范围内；普通 shell 不可读",

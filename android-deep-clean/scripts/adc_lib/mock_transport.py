@@ -222,7 +222,15 @@ class MockTransport(Transport):
                     total = host.stat().st_size
                 kb = (total + 1023) // 1024 if total else 0
                 lines.append(f"{kb}\t{device_path}")
-            return 0, "\n".join(lines) + ("\n" if lines else ""), ""
+            # Test hooks: simulate du failing as a whole (exit code + message).
+            extra_error = str(self.caps.get("du_error") or "").strip()
+            if extra_error:
+                lines.append(extra_error)
+            try:
+                du_exit = int(self.caps.get("du_exit_code") or 0)
+            except (TypeError, ValueError):
+                du_exit = 0
+            return du_exit, "\n".join(lines) + ("\n" if lines else ""), ""
         raise TransportError("mock transport 不执行任意 shell 命令")
 
     def _mock_stat(self, parts: list[str]) -> tuple[int, str, str]:

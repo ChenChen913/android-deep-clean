@@ -279,6 +279,10 @@ class AppStorageIndex:
         apk_base_bytes = sum(row["apk_base_bytes"] or 0 for row in self.rows if row["apk_base_bytes"] is not None)
         apk_split_bytes = sum(row["apk_split_bytes"] or 0 for row in self.rows if row["apk_split_bytes"] is not None)
         apk_file_count = sum(int(row["apk_file_count"] or 0) for row in self.rows)
+        base_unknown = sum(
+            1 for row in self.rows
+            if row["apk_bytes"] is not None and row["apk_base_bytes"] is None
+        )
         internal_data_bytes = sum(row["internal_data_bytes"] or 0 for row in self.rows)
         internal_cache_bytes = sum(row["internal_cache_bytes"] or 0 for row in self.rows)
         data_bytes = sum(row["external_data_bytes"] for row in self.rows)
@@ -313,10 +317,15 @@ class AppStorageIndex:
             key=lambda row: row["external_total_bytes"], reverse=True,
         )[: self.top_apps]
         residue = sorted(residue_rows, key=lambda row: row["external_total_bytes"], reverse=True)
-        internal_readable = any(
-            row["internal_status"] == "collected" for row in self.rows
-        )
-        internal_state = "部分可读（只读 du）" if internal_readable else "不可读（需要 StorageStatsManager 权限或 Root）"
+        internal_statuses = {row["internal_status"] for row in self.rows}
+        internal_any_partial = "partial" in internal_statuses
+        internal_readable = bool(internal_statuses & {"collected", "partial"})
+        if internal_any_partial:
+            internal_state = "部分可读（只读 du，部分目录不可读，数值为下限）"
+        elif internal_readable:
+            internal_state = "部分可读（只读 du）"
+        else:
+            internal_state = "不可读（需要 StorageStatsManager 权限或 Root）"
         split_status = str((self.manifest.get("apk") or {}).get("split_status") or "")
         split_state = {
             "collected": "已尝试基础 APK + split APK",
@@ -365,6 +374,10 @@ class AppStorageIndex:
                 "internal_data": internal_state,
                 "internal_cache": internal_state,
                 "split_apk": split_state,
+                "apk_base": (
+                    f"{base_unknown} 个应用的基础 APK 不可读或未识别，合计为下限"
+                    if base_unknown else ""
+                ),
             },
             "capabilities": self.manifest.get("capabilities") or {},
             "internal_status": str((self.manifest.get("internal") or {}).get("status") or ""),

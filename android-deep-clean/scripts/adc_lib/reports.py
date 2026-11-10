@@ -77,6 +77,7 @@ _COLLECTION_LABELS = {"images": "图片", "video": "视频", "audio": "音频", 
 _COLLECTION_STATUS_LABELS = {
     "ok": "正常",
     "empty": "0 条（未发现同类文件）",
+    "zero_unconfirmed": "0 条（少量文件，无法确认）",
     "zero_mismatch": "0 条但与扫描不一致",
     "failed": "失败",
     "skipped": "跳过",
@@ -160,6 +161,17 @@ def _media_lines(media: dict[str, Any]) -> list[str]:
         )
         lines += [
             f"- 零记录异常：{md_escape(names)}；文件扫描发现同类文件，不能认定媒体库为空。",
+            "",
+        ]
+    if collection_cross.get("zero_unconfirmed"):
+        names = "、".join(
+            _COLLECTION_LABELS.get(str(name), str(name))
+            for name in collection_cross.get("zero_unconfirmed") or []
+        )
+        threshold = collection_cross.get("threshold") or 10
+        lines += [
+            f"- 零记录待确认：{md_escape(names)}；文件扫描只发现少量同类文件（低于异常阈值 {threshold}），"
+            "无法确认媒体库为空，也不判定为异常。",
             "",
         ]
 
@@ -275,7 +287,10 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
         "| 指标 | 数值 | 口径 |",
         "|---|---:|---|",
         f"| 应用包 | {packages.get('total', 0)} 个 | 已安装 {packages.get('installed', 0)}，系统 {packages.get('system', 0)} |",
-        f"| 基础 APK | {known.get('apk_base_human') or human_bytes(int(known.get('apk_base_bytes') or 0))} | 基础安装包 |",
+        f"| 基础 APK | {known.get('apk_base_human') or human_bytes(int(known.get('apk_base_bytes') or 0))} | "
+        + md_escape(
+            "基础安装包" + (f"；{unknown['apk_base']}" if unknown.get("apk_base") else "")
+        ) + " |",
         f"| Split APK | {known.get('apk_split_human') or human_bytes(int(known.get('apk_split_bytes') or 0))} | "
         f"共 {known.get('apk_file_count', 0)} 个 APK 文件；{md_escape(str(unknown.get('split_apk') or '未采集'))} |",
         f"| 内部 data / cache | {known.get('internal_data_human') or human_bytes(int(known.get('internal_data_bytes') or 0))} | "

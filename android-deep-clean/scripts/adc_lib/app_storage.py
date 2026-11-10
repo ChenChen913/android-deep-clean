@@ -13,6 +13,7 @@ tools, split-APK query budgets and stat failures are reported as
 
 from __future__ import annotations
 
+import posixpath
 import sqlite3
 from typing import Any
 
@@ -240,13 +241,29 @@ class AppStorageCollector:
     def _apk_entry(package: str, files: list[dict[str, Any]]) -> dict[str, Any]:
         ok = [item for item in files if item.get("status") == "ok"]
         total = sum(int(item.get("size") or 0) for item in ok) if ok else None
-        base = next(
-            (int(item.get("size") or 0) for item in ok if str(item.get("path", "")).lower().endswith("/base.apk")),
-            None,
+        # Only a real base APK can be counted as the base.  ``pm path`` prints
+        # the base first, and vendor bundles do not always name it base.apk
+        # (e.g. Huawei system apps use Settings.apk / *_signed_entry.apk), so a
+        # base.apk-only rule would misclassify them.  A first entry that is
+        # clearly a split_* file is never a base, and a readable split must
+        # never stand in for an unreadable base.
+        named_base = [
+            item for item in files
+            if posixpath.basename(str(item.get("path") or "")).lower() == "base.apk"
+        ]
+        base_item: dict[str, Any] | None = None
+        if named_base:
+            base_item = next((item for item in named_base if item.get("status") == "ok"), None)
+        elif files:
+            first = files[0]
+            first_name = posixpath.basename(str(first.get("path") or "")).lower()
+            if not first_name.startswith("split_"):
+                base_item = first if first.get("status") == "ok" else None
+        base = int(base_item.get("size") or 0) if base_item else None
+        split = (
+            sum(int(item.get("size") or 0) for item in ok if item is not base_item)
+            if ok else None
         )
-        if base is None and ok:
-            base = int(ok[0].get("size") or 0)
-        split = (total - base) if total is not None and base is not None else None
         if not files:
             status = "no_path"
         elif not ok:
@@ -258,6 +275,10 @@ class AppStorageCollector:
             else:
                 status = "stat_failed"
         elif len(ok) < len(files):
+            status = "partial"
+        elif base is None:
+            # Readable splits but no identifiable base: the base size is unknown,
+            # so this is not a complete APK measurement.
             status = "partial"
         else:
             status = "ok"
@@ -329,7 +350,7 @@ class AppStorageCollector:
                 f"{shell_quote(base + '/code_cache')} 2>&1"
             )
             try:
-                _, output, _ = self.transport.shell_rc(command, timeout=self.timeout)
+                rc, output, _ = self.transport.shell_rc(command, timeout=self.timeout)
             except TransportError as exc:
                 results.append({
                     "package": package,
@@ -342,14 +363,28 @@ class AppStorageCollector:
                 continue
             parsed: dict[str, int] = {}
             permission = False
+            errors: list[str] = []
+            missing_subdirs = 0
             for line in output.splitlines():
                 text = line.strip()
-                if "permission denied" in text.lower():
+                if not text:
+                    continue
+                lowered = text.lower()
+                if "permission denied" in lowered or "operation not permitted" in lowered:
                     permission = True
+                    errors.append(text[:200])
                     continue
                 parts = text.split(None, 1)
                 if len(parts) == 2 and parts[0].isdigit():
                     parsed[parts[1]] = int(parts[0]) * 1024
+                    continue
+                if lowered.startswith("du:"):
+                    if "no such file or directory" in lowered:
+                        # cache/code_cache often do not exist; that is not a
+                        # completeness problem for the base directory total.
+                        missing_subdirs += 1
+                        continue
+                    errors.append(text[:200])
             total = parsed.get(base)
             if total is None:
                 results.append({
@@ -358,27 +393,39 @@ class AppStorageCollector:
                     "internal_cache_bytes": None,
                     "internal_code_cache_bytes": None,
                     "internal_status": "permission_denied" if permission else "unavailable",
-                    "error": "Permission denied" if permission else "du 未返回该应用的数据",
+                    "error": (errors[0] if errors else "") or (
+                        "Permission denied" if permission else f"du 未返回该应用的数据（退出码 {rc}）"
+                    ),
                 })
                 continue
+            # du keeps printing a total for the part it could read, so a permission
+            # error or an unexplained non-zero exit means the number is a lower
+            # bound, never a complete measurement.  Missing cache/code_cache
+            # subdirectories are normal and do not degrade the base total.
+            unexplained_failure = bool(errors) or (rc != 0 and missing_subdirs == 0)
+            incomplete = bool(permission) or unexplained_failure
             results.append({
                 "package": package,
                 "internal_data_bytes": total,
                 "internal_cache_bytes": parsed.get(base + "/cache") or 0,
                 "internal_code_cache_bytes": parsed.get(base + "/code_cache") or 0,
-                "internal_status": "collected",
-                "error": "",
+                "internal_status": "partial" if incomplete else "collected",
+                "error": (
+                    ("du 退出码 " + str(rc) + "；" if rc != 0 else "")
+                    + ("；".join(errors[:2]) if errors else "仅统计到可读部分")
+                ) if incomplete else "",
             })
         collected = sum(1 for item in results if item.get("internal_status") == "collected")
+        partial = sum(1 for item in results if item.get("internal_status") == "partial")
         if not results:
             status = "unavailable"
             reason = "没有可统计的内部数据应用"
         elif collected == len(results):
             status = "collected"
             reason = ""
-        elif collected:
+        elif collected or partial:
             status = "partial"
-            reason = "部分应用内部数据不可读"
+            reason = f"部分应用内部数据不可读（完整 {collected} 个，仅部分可读 {partial} 个）"
         elif any(item.get("internal_status") == "permission_denied" for item in results):
             status = "permission_denied"
             reason = "root/su 下仍无法读取 /data/data"
@@ -447,6 +494,24 @@ class AppStorageCollector:
         elif internal_status in {"collected", "partial", "permission_denied"}:
             limitations.append(
                 "内部 data 由只读 du 统计，包含 cache/code_cache；它们是子集，不能与外部缓存重复相加。"
+            )
+        partial_internal = [
+            item for item in internal.get("packages") or []
+            if str(item.get("internal_status") or "") == "partial"
+        ]
+        if partial_internal:
+            limitations.append(
+                f"{len(partial_internal)} 个应用的内部 data 只统计到可读部分（du 权限不足或命令异常），"
+                "这些数值是下限，不是完整占用。"
+            )
+        missing_base = sum(
+            1 for entry in entries
+            if entry.get("apk_bytes") is not None and entry.get("apk_base_bytes") is None
+        )
+        if missing_base:
+            limitations.append(
+                f"{missing_base} 个应用的基础 APK 无法读取或未识别为 base.apk；"
+                "基础 APK 合计是下限，已读到的 split APK 单独统计，不折算进基础 APK。"
             )
         if split_status == "partial":
             limitations.append(f"split APK 只查询了前 {self.split_max_packages} 个应用，其余只统计基础 APK。")

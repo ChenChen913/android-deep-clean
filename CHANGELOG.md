@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.10.2 — 修正应用存储与 MediaStore 的完整性判定
+
+### Fixed
+- **应用内部存储**：`du -sk` 的退出码与错误输出不再被忽略。此前只要 `du` 打印了 base 合计就标记 `collected`，即使同时存在 `Permission denied`。
+  - 权限错误或无法解释的非零退出 → 该应用 `internal_status=partial`，保留已读到的数值，并在 `internal_error` 写明原因；汇总状态同步降为 `partial`。
+  - `cache` / `code_cache` 不存在（`No such file or directory`）属于正常情况，不会降级。
+  - 没有任何数据时按原因标记 `permission_denied` 或 `unavailable`，不写 0 MB。
+  - 报告新增限制说明：partial 的内部 data 是下限，不是完整占用。
+- **基础 APK / Split APK 口径**：`base.apk` 存在时只认它；厂商系统应用不用该文件名时（真机实测华为 `Settings.apk`、`*_signed_entry.apk`），按 `pm path` 顺序取第一个非 `split_*` 条目为基础 APK。基础 APK 不可读时不再用第一个可读 APK 顶替，`apk_base_bytes` 记为未知，可读的 split 仍单独累加到 `apk_split_bytes`；该应用标记 `partial`，报告说明基础 APK 合计是下限。
+- **MediaStore 零记录**：0 条不再直接判为 `empty`。新增 `zero_unconfirmed`：文件扫描发现 1 个到阈值−1 个同类文件时，既不认定媒体库为空，也不判定为异常；`empty` 只用于文件扫描也没有同类文件的情况。原有 `ok` / `empty` / `zero_mismatch` / `failed` / `skipped` 语义不变。
+- **MediaStore 隐藏路径核对（真机核实后保留排除）**：原 `AND path NOT LIKE '%/.%'` 经真机验证是正确的——MediaStore 不索引任何含隐藏路径组件的文件（`content query` 对 `.cache`、`.thumbnails`、`.gs` 下的图片均返回无结果），若把隐藏目录计入，1022 张主题预览/相册缓存图会被误判成“索引缺失”。本轮保留该排除规则并写入注释与文档，同时新增 `crosscheck.hidden_excluded` 与限制说明，把被排除的数量如实披露，不再静默丢弃。
+- **报告**：Markdown 与 HTML 增加 `zero_unconfirmed` 标签与「零记录待确认」提示；内部 data 为 partial 时显示「数值为下限」，HTML 不会把部分采集描述为完整。
+
+### Tests
+- 新增 17 条回归用例：内部 data 部分权限、命令完全失败、失败且是权限错误、缺失子目录不降级；基础 APK 不可读、只有 split、老式单 APK、华为系统 bundle；零记录 0/1/9/10 矩阵与报告文案；隐藏目录不计入但如实披露、缩略图与 trashed 排除；空间速览的下限口径。
+
+### Real device
+- HONOR HLK-AL00（HarmonyOS 3.0 / Android 10 / SDK 29，USB + ADB，非 Root）：doctor、scan、analyze 全部通过，`coverage=good`。
+- 293 个应用全部识别基础 APK（9.00 GB）与 split（20.78 MB），共 310 个 APK 文件；修正前有 7 个华为系统应用（Settings/Contacts/Phone/Calendar/Clock/Notepad/Tips）被误判为基础 APK 未知。
+- MediaStore：images 4812 行 / 扫描 4914 个可见文件，video 73/73，audio 78/77，`downloads` 集合在该 ROM 不可用（已知限制）；隐藏目录另有 6076 个媒体扩展名文件（6037 张图片等）按规则排除并披露。
+- `iter_tree` 对 `/data` 实测捕获 `Permission denied` 并写入 skipped（第 2 项修复的真机验证）。
+- 内部 data 在非 Root 下按预期标记 `unavailable`，未伪装成 0 MB。
+
+### Notes
+- 全量 319 passed, 2 skipped（321 collected）。
+- 未新增真机验收；`du` 权限降级与 MediaStore 隐藏目录核对仍需真机复测。
+
 ## v1.10.1 — 修复特殊缓存守卫不一致与扫描覆盖漏报
 
 ### Fixed

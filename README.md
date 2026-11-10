@@ -400,7 +400,11 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 扫描有、索引无：可能是隐藏目录、未索引或应用私有媒体，**不代表异常**。
 - 大小不一致：索引可能过期，以文件系统为准。
 - `trashed` / `pending`：只提示索引状态，不改变风险。
-- **零记录诊断**：每个集合独立标记 `ok` / `empty` / `zero_mismatch` / `failed` / `skipped`。查询成功但返回 0 条时，如果文件扫描发现同类文件达到阈值（默认 10 个），标记 `zero_mismatch`，整体状态变为 `partial`，报告明确提示“不能认定媒体库为空”；没有同类文件时标记 `empty`，不当作失败。
+- **零记录诊断**：每个集合独立标记 `ok` / `empty` / `zero_unconfirmed` / `zero_mismatch` / `failed` / `skipped`。查询成功但返回 0 条时分三档：
+  - 文件扫描也没有同类文件 → `empty`（不当作失败）；
+  - 文件扫描发现 1 个到阈值−1 个同类文件 → `zero_unconfirmed`，无法确认媒体库为空，也不判定异常；
+  - 文件扫描发现同类文件达到阈值（默认 10 个）→ `zero_mismatch`，整体状态变为 `partial`，报告明确提示“不能认定媒体库为空”。
+- 零记录核对与 MediaStore 的实际索引范围一致：路径中含隐藏目录/文件（`/.xxx`）的媒体不计入，因为 MediaStore 本来就不索引这些路径（真机验证：`content query` 对 `.cache`、`.thumbnails`、`.gs` 下的图片均返回“No result found”）。被排除的数量单独记在 `crosscheck.hidden_excluded`，并在限制里如实说明，不会静默丢弃。
 - `sources.json` 记录实际查询命令、投影字段、退出码、stderr、返回行数、尝试次数和耗时，便于排查权限、Provider 或兼容性问题。
 
 媒体索引只作为证据，不生成候选、不改变风险等级、不改变可选择性，也不计入文件扫描合计。清理仍需 `plan → select → token → execute`。
@@ -429,6 +433,8 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 条件已知：root/su 下用只读 `du` 统计的应用内部 data/cache/code_cache（默认最多 60 个应用，优先外部数据较大的包）。内部统计使用 `/data/data`（通常指向 `/data/user/0`），不重复扫描 `/data/user`。
 - 未知或部分：普通 shell 下的内部 data/cache、超出 split 查询上限的应用、路径缺失/权限不足/stat 失败的应用。
 - 状态会明确区分 `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`，不会把未知数据写成 0 MB。
+- 基础 APK 优先认 `base.apk`；厂商系统应用不使用该文件名时（如华为的 `Settings.apk` / `*_signed_entry.apk`），按 `pm path` 的返回顺序取第一个非 `split_*` 的条目为基础 APK。基础 APK 不可读时 `apk_base_bytes` 记为未知，**不会用某个可读的 split APK 顶替**；split APK 单独累加到 `apk_split_bytes`，两者不混算。
+- 内部 data 的 `collected` 只表示 `du` 完整成功。出现权限错误或无法解释的非零退出时，即使已经读到部分目录，也标记为 `partial`，数值按下限使用并在报告中写明；`cache`/`code_cache` 不存在属于正常情况，不会因此降级。
 - 能列出外部存储占用较高的应用，以及未安装应用仍保留的外部目录。
 - 应用类候选（app_cache / browser_cache / chat_cache / residue）会附带包级 APK、内部 data 与外部目录证据，但仍是证据，不改变风险或可选择性。
 
@@ -627,7 +633,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-10 / v1.10.1 实测：302 passed, 2 skipped（304 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-10 / v1.10.2 实测：319 passed, 2 skipped（321 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -674,7 +680,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 目录档案按路径识别，重命名会显示为“未再出现 + 新增”；扫描不完整或环境变化时不做消失判断。
 - 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
 - 目录档案与覆盖率改动尚未完成真机验收。
-- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对，只有同类文件达到阈值时才标记 `zero_mismatch`。
+- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对：同类文件达到阈值才标记 `zero_mismatch`，1 个到阈值−1 个标记 `zero_unconfirmed`（无法确认为空），完全没有同类文件才标记 `empty`；隐藏目录不参与核对（MediaStore 不索引），被排除的数量单独列出。
 - 扫描覆盖以 `find` 的 stderr 为准：子目录被 ROM 锁住时覆盖率降为 `partial` 并列出跳过路径；`doctor` 只抽样最多 6 个 `Android/data` 应用目录，未抽样到的应用仍可能少算，报告不会替它宣称完整。
 - 应用级存储：基础 APK 不需要 Root；split APK 查询有应用数量上限；内部 data/cache 只有在 root/su 且存在 `du` 时才做有上限的只读统计。普通 shell 下明确标记为不可读。未使用会写系统缓存的 `dumpsys diskstats`，也未开发 StorageStatsManager 辅助 APK。
 - 隐藏/特殊缓存只按“名称/扩展名 + 允许根目录”识别，且全部是 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。
@@ -688,8 +694,8 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 | 项目 | 状态 |
 |---|---|
 | 真实设备只读（local + ADB） | 1 台通过：HONOR HLK-AL00，HarmonyOS 3.0 兼容版 / Android 10 |
-| MediaStore 只读索引 | 1 台通过：HONOR HLK-AL00；图片/视频/音频可用，`downloads` 在该 ROM 不可用；4,965 条索引中 4,964 条匹配，范围内缺失 0 条 |
-| 应用级存储（部分） | 1 台通过：HONOR HLK-AL00；293 个应用基础 APK 8.98 GB，外部 data 1.92 GB；内部 data/cache 未读取 |
+| MediaStore 只读索引 | 1 台通过：HONOR HLK-AL00；图片/视频/音频可用，`downloads` 在该 ROM 不可用；4,963 条索引，扫描有/索引无 158 条（未索引或隐藏目录，不代表异常） |
+| 应用级存储（部分） | 1 台通过：HONOR HLK-AL00；293 个应用基础 APK 9.00 GB，split 20.78 MB（按上限查询 120 个应用），外部 data 2.15 GB；内部 data/cache 未读取（无 Root） |
 | 隔离 / 验证 / 恢复 | 1 台通过，仅自建测试文件 |
 | 永久删除（purge） | 1 台通过：自建 2 个测试文件（30 B），purge 2/2 成功，可用空间增加；错误令牌被拒绝 |
 | 用户真实数据清理 | 0 台完成验收 |
