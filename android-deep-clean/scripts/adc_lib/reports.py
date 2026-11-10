@@ -76,7 +76,7 @@ _MEDIA_STATUS_LABELS = {
 _COLLECTION_LABELS = {"images": "图片", "video": "视频", "audio": "音频", "downloads": "下载"}
 _COLLECTION_STATUS_LABELS = {
     "ok": "正常",
-    "empty": "0 条（未发现同类文件）",
+    "empty": "0 条（未发现可参与核对的同类文件）",
     "zero_unconfirmed": "0 条（少量文件，无法确认）",
     "zero_mismatch": "0 条但与扫描不一致",
     "failed": "失败",
@@ -282,6 +282,12 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
         lines.append("")
         return lines
     unknown = app.get("unknown") or {}
+    cache_state = str(unknown.get("internal_cache") or "")
+    cache_note = (
+        f"（{md_escape(cache_state)}）"
+        if cache_state and cache_state not in {"已读取", "未采集"} else ""
+    )
+    cache_human = str(known.get("internal_cache_human") or "未知")
     lines += [
         "",
         "| 指标 | 数值 | 口径 |",
@@ -294,7 +300,7 @@ def _app_storage_lines(app: dict[str, Any]) -> list[str]:
         f"| Split APK | {known.get('apk_split_human') or human_bytes(int(known.get('apk_split_bytes') or 0))} | "
         f"共 {known.get('apk_file_count', 0)} 个 APK 文件；{md_escape(str(unknown.get('split_apk') or '未采集'))} |",
         f"| 内部 data / cache | {known.get('internal_data_human') or human_bytes(int(known.get('internal_data_bytes') or 0))} | "
-        f"含内部 cache {known.get('internal_cache_human') or '0 B'}；{md_escape(str(unknown.get('internal_data') or '不可读'))} |",
+        f"含内部 cache {cache_human}{cache_note}；{md_escape(str(unknown.get('internal_data') or '不可读'))} |",
         f"| 外部 data | {known.get('external_data_human') or human_bytes(int(known.get('external_data_bytes') or 0))} | 含 cache {known.get('external_cache_human') or '0 B'} |",
         f"| 外部 media | {known.get('external_media_human') or human_bytes(int(known.get('external_media_bytes') or 0))} | `/sdcard/Android/media` |",
         f"| 外部 obb | {known.get('external_obb_human') or human_bytes(int(known.get('external_obb_bytes') or 0))} | `/sdcard/Android/obb` |",

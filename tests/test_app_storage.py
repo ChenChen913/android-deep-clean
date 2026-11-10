@@ -372,3 +372,89 @@ def test_vendor_bundle_without_base_name_is_recognised(env):
     assert entry["apk_split_bytes"] == 200
     assert entry["apk_bytes"] == 1200
     assert entry["status"] == "ok"
+
+
+# ---------------------------------------------------------------- internal cache
+# A missing or empty cache is a real 0 B; an unreadable one is unknown and must
+# never be turned into a fake 0 B by the collector, the index or the reports.
+
+
+def _internal_entry(env) -> dict:
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    return manifest["packages"][0]
+
+
+def test_internal_cache_with_data_is_measured(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.set_caps(privilege="root")
+    env.prepare_analysis()
+
+    entry = _internal_entry(env)
+    assert entry["internal_cache_bytes"] >= 400
+    assert entry["internal_code_cache_bytes"] == 0, "目录不存在时才是真正的 0"
+    assert entry["internal_status"] == "collected"
+
+
+def test_internal_cache_absent_is_zero(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.set_caps(privilege="root")
+    env.prepare_analysis()
+
+    entry = _internal_entry(env)
+    assert entry["internal_cache_bytes"] == 0
+    assert entry["internal_code_cache_bytes"] == 0
+    assert entry["internal_status"] == "collected"
+
+
+def test_internal_cache_present_but_empty_is_zero(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.dir("/data/data/com.installed.app/cache")
+    env.set_caps(privilege="root")
+    env.prepare_analysis()
+
+    entry = _internal_entry(env)
+    assert entry["internal_cache_bytes"] == 0
+    assert entry["internal_status"] == "collected"
+
+
+def test_internal_cache_unreadable_is_unknown_not_zero(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.set_caps(privilege="root", inaccessible=["/data/data/com.installed.app/cache"])
+    env.prepare_analysis()
+
+    entry = _internal_entry(env)
+    assert entry["internal_cache_bytes"] is None, "权限不足不能写成 0 B"
+    assert entry["internal_status"] == "partial"
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    assert manifest["internal"]["cache_bytes"] is None, "汇总层也不能把未知写成 0"
+    assert manifest["internal"]["cache_unknown"] == 1
+    app = _app(env)
+    assert app["known"]["internal_cache_human"] == "未知"
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    assert "含内部 cache 未知" in report
+    assert "du 未返回 cache 大小" in report
+    html = (env.state_dir / "analysis" / "report-before.html").read_text(encoding="utf-8")
+    assert "du 未返回 cache 大小" in html
+
+
+def test_internal_code_cache_unreadable_keeps_cache_known(env):
+    _setup(env)
+    env.phone.file("/data/data/com.installed.app/databases/app.db", size=1000)
+    env.phone.file("/data/data/com.installed.app/cache/c.bin", size=400)
+    env.phone.file("/data/data/com.installed.app/code_cache/d.bin", size=200)
+    env.set_caps(privilege="root", inaccessible=["/data/data/com.installed.app/code_cache"])
+    env.prepare_analysis()
+
+    entry = _internal_entry(env)
+    assert entry["internal_cache_bytes"] >= 400
+    assert entry["internal_code_cache_bytes"] is None
+    assert entry["internal_status"] == "partial", "code_cache 不可读时不能标为完整采集"
+    manifest = json.loads(env.state_path("scan/aux/app-storage.json").read_text(encoding="utf-8"))
+    assert manifest["internal"]["cache_bytes"] >= 400
+    # cache 本身可读，未知的是 code_cache；它只在逐应用字段里记 NULL。
+    assert manifest["internal"]["cache_unknown"] == 0

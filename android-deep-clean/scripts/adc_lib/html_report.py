@@ -27,7 +27,7 @@ _MEDIA_STATUS = {
 _COLLECTION = {"images": "图片", "video": "视频", "audio": "音频", "downloads": "下载"}
 _MEDIA_COLLECTION_STATUS = {
     "ok": ("正常", "safe"),
-    "empty": ("0 条（未发现同类文件）", "caution"),
+    "empty": ("0 条（未发现可参与核对的同类文件）", "caution"),
     "zero_unconfirmed": ("0 条（少量文件，无法确认）", "caution"),
     "zero_mismatch": ("0 条但与扫描不一致", "danger"),
     "failed": ("失败", "danger"),
@@ -391,7 +391,13 @@ def _app_section(app: dict[str, Any]) -> str:
         if unknown.get("apk_base"):
             parts.append(f'<div class="note">基础 APK：{_e(unknown.get("apk_base"))}；split APK 单独统计，不折算进基础 APK。</div>')
         if unknown.get("internal_data"):
-            parts.append(f'<div class="note">内部 data：{_e(unknown.get("internal_data"))}；内部 cache 是 data 的子集。</div>')
+            cache_note = str(unknown.get("internal_cache") or "")
+            extra = (
+                f"内部 cache：{_e(cache_note)}。"
+                if cache_note and cache_note not in {"已读取", "未采集"}
+                else "内部 cache 是 data 的子集。"
+            )
+            parts.append(f'<div class="note">内部 data：{_e(unknown.get("internal_data"))}；{extra}</div>')
         top = app.get("top_external") or []
         if top:
             parts.append('<h3>外部存储占用较高的应用</h3><div class="scroll"><table><thead><tr>'

@@ -472,3 +472,17 @@ def test_thumbnails_and_trashed_files_stay_out_of_counts(env):
     images = next(item for item in _manifest(env)["collections"] if item["name"] == "images")
     assert images["scan_files"] == 1
     assert images["status"] == "ok"
+
+
+def test_empty_status_wording_is_consistent_across_reports(env):
+    """The label must say "可参与核对" because hidden paths are out of scope."""
+    env.set_media_store(images=[], video=[], audio=[], downloads=[])
+    env.prepare_analysis()
+
+    label = "0 条（未发现可参与核对的同类文件）"
+    report = (env.state_dir / "analysis" / "report-before.md").read_text(encoding="utf-8")
+    html = (env.state_dir / "analysis" / "report-before.html").read_text(encoding="utf-8")
+    assert label in report
+    assert label in html
+    assert "0 条（未发现同类文件）" not in report
+    assert "0 条（未发现同类文件）" not in html

@@ -283,8 +283,16 @@ class AppStorageIndex:
             1 for row in self.rows
             if row["apk_bytes"] is not None and row["apk_base_bytes"] is None
         )
-        internal_data_bytes = sum(row["internal_data_bytes"] or 0 for row in self.rows)
-        internal_cache_bytes = sum(row["internal_cache_bytes"] or 0 for row in self.rows)
+        # Only apps whose internal data was actually measured can contribute.
+        # A cache we could not read stays unknown: summing it as 0 would turn a
+        # permission failure into a fake "0 B" in every report.
+        measured_rows = [row for row in self.rows if row["internal_data_bytes"] is not None]
+        internal_data_bytes = sum(int(row["internal_data_bytes"] or 0) for row in measured_rows)
+        cache_known_rows = [
+            row for row in measured_rows if row["internal_cache_bytes"] is not None
+        ]
+        cache_unknown = len(measured_rows) - len(cache_known_rows)
+        internal_cache_bytes = sum(int(row["internal_cache_bytes"] or 0) for row in cache_known_rows)
         data_bytes = sum(row["external_data_bytes"] for row in self.rows)
         media_bytes = sum(row["external_media_bytes"] for row in self.rows)
         obb_bytes = sum(row["external_obb_bytes"] for row in self.rows)
@@ -326,6 +334,18 @@ class AppStorageIndex:
             internal_state = "部分可读（只读 du）"
         else:
             internal_state = "不可读（需要 StorageStatsManager 权限或 Root）"
+        if not measured_rows:
+            cache_state = "未采集"
+            cache_human = "未知"
+        elif cache_unknown == len(measured_rows):
+            cache_state = "du 未返回 cache 大小"
+            cache_human = "未知"
+        elif cache_unknown:
+            cache_state = f"{cache_unknown} 个应用的 cache 不可读，合计为下限"
+            cache_human = human_bytes(internal_cache_bytes)
+        else:
+            cache_state = ""
+            cache_human = human_bytes(internal_cache_bytes)
         split_status = str((self.manifest.get("apk") or {}).get("split_status") or "")
         split_state = {
             "collected": "已尝试基础 APK + split APK",
@@ -356,7 +376,9 @@ class AppStorageIndex:
                 "internal_data_bytes": internal_data_bytes,
                 "internal_data_human": human_bytes(internal_data_bytes),
                 "internal_cache_bytes": internal_cache_bytes,
-                "internal_cache_human": human_bytes(internal_cache_bytes),
+                "internal_cache_human": cache_human,
+                "internal_cache_unknown": cache_unknown,
+                "internal_cache_measured": len(measured_rows),
                 "external_data_bytes": data_bytes,
                 "external_data_human": human_bytes(data_bytes),
                 "external_media_bytes": media_bytes,
@@ -372,7 +394,7 @@ class AppStorageIndex:
             },
             "unknown": {
                 "internal_data": internal_state,
-                "internal_cache": internal_state,
+                "internal_cache": cache_state or "已读取",
                 "split_apk": split_state,
                 "apk_base": (
                     f"{base_unknown} 个应用的基础 APK 不可读或未识别，合计为下限"
@@ -402,7 +424,11 @@ class AppStorageIndex:
             "apk_split_human": human_bytes(row["apk_split_bytes"] or 0),
             "apk_file_count": int(row["apk_file_count"] or 0),
             "internal_data_human": human_bytes(row["internal_data_bytes"] or 0),
-            "internal_cache_human": human_bytes(row["internal_cache_bytes"] or 0),
+            "internal_cache_human": (
+                "-" if row["internal_data_bytes"] is None
+                else ("未知" if row["internal_cache_bytes"] is None
+                      else human_bytes(row["internal_cache_bytes"]))
+            ),
             "internal_status": row["internal_status"],
             "data_human": human_bytes(row["external_data_bytes"]),
             "media_human": human_bytes(row["external_media_bytes"]),
@@ -480,10 +506,14 @@ class AppStorageIndex:
                     f"（基础 {human_bytes(row['apk_base_bytes'] or 0)} + "
                     f"split {human_bytes(row['apk_split_bytes'] or 0)}）"
                 )
-            if row["internal_status"] == "collected":
+            if row["internal_data_bytes"] is not None:
+                cache_text = (
+                    "未知" if row["internal_cache_bytes"] is None
+                    else human_bytes(row["internal_cache_bytes"])
+                )
                 internal_text = (
-                    f"内部 data {human_bytes(row['internal_data_bytes'] or 0)}"
-                    f"（含 cache {human_bytes(row['internal_cache_bytes'] or 0)}）"
+                    f"内部 data {human_bytes(row['internal_data_bytes'])}"
+                    f"（cache {cache_text}）"
                 )
             else:
                 internal_text = "内部 data/cache 不可读"

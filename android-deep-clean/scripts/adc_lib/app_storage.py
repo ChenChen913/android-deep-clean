@@ -361,29 +361,43 @@ class AppStorageCollector:
                     "error": str(exc)[:200],
                 })
                 continue
+            cache_path = base + "/cache"
+            code_cache_path = base + "/code_cache"
             parsed: dict[str, int] = {}
             permission = False
             errors: list[str] = []
             missing_subdirs = 0
+            absent_subdirs: set[str] = set()
             for line in output.splitlines():
                 text = line.strip()
                 if not text:
                     continue
                 lowered = text.lower()
-                if "permission denied" in lowered or "operation not permitted" in lowered:
-                    permission = True
-                    errors.append(text[:200])
-                    continue
                 parts = text.split(None, 1)
                 if len(parts) == 2 and parts[0].isdigit():
                     parsed[parts[1]] = int(parts[0]) * 1024
                     continue
+                is_permission = (
+                    "permission denied" in lowered or "operation not permitted" in lowered
+                )
                 if lowered.startswith("du:"):
+                    # Attribute the error to one of the three requested paths, so
+                    # a missing subdirectory (a real 0 B) is not confused with an
+                    # unreadable one (unknown), and vice versa.
+                    target = next(
+                        (path for path in (code_cache_path, cache_path, base) if path in text), ""
+                    )
                     if "no such file or directory" in lowered:
-                        # cache/code_cache often do not exist; that is not a
-                        # completeness problem for the base directory total.
                         missing_subdirs += 1
+                        if target:
+                            absent_subdirs.add(target)
                         continue
+                    errors.append(text[:200])
+                    if is_permission:
+                        permission = True
+                    continue
+                if is_permission:
+                    permission = True
                     errors.append(text[:200])
             total = parsed.get(base)
             if total is None:
@@ -398,17 +412,36 @@ class AppStorageCollector:
                     ),
                 })
                 continue
+            # A subdirectory is 0 B only when du reported 0 (existing but empty)
+            # or said it does not exist.  Anything else -- permission denied,
+            # I/O error, or no line at all -- stays unknown instead of becoming
+            # a fake 0 B.
+            def subdir_bytes(path: str) -> int | None:
+                if path in parsed:
+                    return parsed[path]
+                if path in absent_subdirs:
+                    return 0
+                return None
+
+            cache_bytes = subdir_bytes(cache_path)
+            code_cache_bytes = subdir_bytes(code_cache_path)
             # du keeps printing a total for the part it could read, so a permission
             # error or an unexplained non-zero exit means the number is a lower
             # bound, never a complete measurement.  Missing cache/code_cache
-            # subdirectories are normal and do not degrade the base total.
+            # subdirectories are normal and do not degrade the base total, but an
+            # unreadable one does.
             unexplained_failure = bool(errors) or (rc != 0 and missing_subdirs == 0)
-            incomplete = bool(permission) or unexplained_failure
+            incomplete = (
+                bool(permission)
+                or unexplained_failure
+                or cache_bytes is None
+                or code_cache_bytes is None
+            )
             results.append({
                 "package": package,
                 "internal_data_bytes": total,
-                "internal_cache_bytes": parsed.get(base + "/cache") or 0,
-                "internal_code_cache_bytes": parsed.get(base + "/code_cache") or 0,
+                "internal_cache_bytes": cache_bytes,
+                "internal_code_cache_bytes": code_cache_bytes,
                 "internal_status": "partial" if incomplete else "collected",
                 "error": (
                     ("du 退出码 " + str(rc) + "；" if rc != 0 else "")
@@ -541,6 +574,9 @@ class AppStorageCollector:
     ) -> dict[str, Any]:
         captured = [entry for entry in entries if entry.get("apk_bytes") is not None]
         internal = internal or {}
+        internal_packages = internal.get("packages") or []
+        measured_internal = [item for item in internal_packages if item.get("internal_data_bytes") is not None]
+        known_cache = [item for item in measured_internal if item.get("internal_cache_bytes") is not None]
         apk_base = sum(int(entry.get("apk_base_bytes") or 0) for entry in captured)
         apk_split = sum(int(entry.get("apk_split_bytes") or 0) for entry in captured)
         status_counts: dict[str, int] = {}
@@ -573,8 +609,15 @@ class AppStorageCollector:
                 "reason": str(internal.get("reason") or ""),
                 "selected": int(internal.get("selected") or 0),
                 "packages": internal.get("packages") or [],
-                "data_bytes": sum(int(item.get("internal_data_bytes") or 0) for item in internal.get("packages") or []),
-                "cache_bytes": sum(int(item.get("internal_cache_bytes") or 0) for item in internal.get("packages") or []),
+                "data_bytes": sum(int(item.get("internal_data_bytes") or 0) for item in measured_internal),
+                # Unreadable caches stay unknown: only measured values are summed,
+                # and the unknown count is reported next to it.
+                "cache_bytes": (
+                    sum(int(item["internal_cache_bytes"]) for item in measured_internal
+                        if item.get("internal_cache_bytes") is not None)
+                    if known_cache else (None if measured_internal else 0)
+                ),
+                "cache_unknown": len(measured_internal) - len(known_cache),
             },
             "capabilities": capability or {},
             "truncated": bool(truncated),

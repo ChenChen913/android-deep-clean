@@ -206,15 +206,21 @@ class MockTransport(Transport):
             return 0, "0\n", ""
         if parts[:2] == ["du", "-sk"]:
             lines: list[str] = []
+            had_error = False
             for device_path in [item for item in parts[2:] if item.startswith("/")]:
                 if self._cap_blocked(device_path):
                     lines.append(f"du: {device_path}: Permission denied")
+                    had_error = True
                     continue
                 try:
                     host, _ = self._map(device_path)
                 except TransportError:
                     continue
                 if not host.exists():
+                    # toybox reports the missing path and keeps going, like the
+                    # real device does; the collector must not read this as 0 B.
+                    lines.append(f"du: {device_path}: No such file or directory")
+                    had_error = True
                     continue
                 if host.is_dir():
                     total = sum(path.stat().st_size for path in host.rglob("*") if path.is_file())
@@ -226,8 +232,9 @@ class MockTransport(Transport):
             extra_error = str(self.caps.get("du_error") or "").strip()
             if extra_error:
                 lines.append(extra_error)
+                had_error = True
             try:
-                du_exit = int(self.caps.get("du_exit_code") or 0)
+                du_exit = int(self.caps.get("du_exit_code") or (1 if had_error else 0))
             except (TypeError, ValueError):
                 du_exit = 0
             return du_exit, "\n".join(lines) + ("\n" if lines else ""), ""

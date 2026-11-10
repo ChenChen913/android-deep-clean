@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.10.3 — 内部 cache 未知值与 empty 文案
+
+### Fixed
+- **内部 cache 的未知值不再写成 0 B**：`du` 明确报「目录不存在」或返回 0（目录存在但为空）时才记 `0`；权限不足、IO 错误或没有返回该路径时记未知（NULL），该应用保持 `partial`。
+  - `internal_cache_bytes` / `internal_code_cache_bytes` 在 SQLite 中存 NULL；只有 `base` 合计可读时才会进入该分支，未知不再被 `or 0` 吞掉。
+  - 汇总只累加已知值，新增 `internal_cache_unknown`（分析摘要）与 `cache_unknown`（manifest）计数；Markdown/HTML 显示「未知」与「du 未返回 cache 大小」，部分已知时标注「合计为下限」。
+  - manifest 的 `internal.cache_bytes` 在没有任何已知值时输出 `null`，不再写 0。
+- **MediaStore `empty` 文案**：由「0 条（未发现同类文件）」改为「0 条（未发现可参与核对的同类文件）」，Markdown 与 HTML 使用同一文案；`crosscheck.note` 的规则说明同步，避免让读者以为隐藏目录也被核对过。
+
+### Tests
+- 新增 6 条回归用例：cache 正常有数据、cache 目录缺失、cache 存在但为空、cache 权限不足（未知且 partial）、code_cache 不可读而 cache 仍已知、empty 文案在 Markdown/HTML 一致。
+
+### Notes
+- 全量 325 passed, 2 skipped（327 collected）。
+- 历史状态目录中旧的 `0` 无法区分「真实为空」与「当时不可读」；重新 `scan` 后才会写入 NULL。
+
 ## v1.10.2 — 修正应用存储与 MediaStore 的完整性判定
 
 ### Fixed

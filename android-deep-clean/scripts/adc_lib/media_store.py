@@ -346,7 +346,7 @@ class MediaStoreCollector:
             "zero_unconfirmed": zero_unconfirmed,
             "empty": empty_collections,
             "note": (
-                "零记录不直接判失败：文件扫描未发现同类文件才算空，达到阈值才算异常，"
+                "零记录不直接判失败：文件扫描未发现可参与核对的同类文件才算空，达到阈值才算异常，"
                 "介于两者之间标记为无法确认。隐藏目录不参与核对（MediaStore 不索引），"
                 "其数量单独列出。"
             ),

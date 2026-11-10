@@ -401,7 +401,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 大小不一致：索引可能过期，以文件系统为准。
 - `trashed` / `pending`：只提示索引状态，不改变风险。
 - **零记录诊断**：每个集合独立标记 `ok` / `empty` / `zero_unconfirmed` / `zero_mismatch` / `failed` / `skipped`。查询成功但返回 0 条时分三档：
-  - 文件扫描也没有同类文件 → `empty`（不当作失败）；
+  - 文件扫描也没有**可参与核对**的同类文件 → `empty`（不当作失败）；
   - 文件扫描发现 1 个到阈值−1 个同类文件 → `zero_unconfirmed`，无法确认媒体库为空，也不判定异常；
   - 文件扫描发现同类文件达到阈值（默认 10 个）→ `zero_mismatch`，整体状态变为 `partial`，报告明确提示“不能认定媒体库为空”。
 - 零记录核对与 MediaStore 的实际索引范围一致：路径中含隐藏目录/文件（`/.xxx`）的媒体不计入，因为 MediaStore 本来就不索引这些路径（真机验证：`content query` 对 `.cache`、`.thumbnails`、`.gs` 下的图片均返回“No result found”）。被排除的数量单独记在 `crosscheck.hidden_excluded`，并在限制里如实说明，不会静默丢弃。
@@ -435,6 +435,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 状态会明确区分 `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`，不会把未知数据写成 0 MB。
 - 基础 APK 优先认 `base.apk`；厂商系统应用不使用该文件名时（如华为的 `Settings.apk` / `*_signed_entry.apk`），按 `pm path` 的返回顺序取第一个非 `split_*` 的条目为基础 APK。基础 APK 不可读时 `apk_base_bytes` 记为未知，**不会用某个可读的 split APK 顶替**；split APK 单独累加到 `apk_split_bytes`，两者不混算。
 - 内部 data 的 `collected` 只表示 `du` 完整成功。出现权限错误或无法解释的非零退出时，即使已经读到部分目录，也标记为 `partial`，数值按下限使用并在报告中写明；`cache`/`code_cache` 不存在属于正常情况，不会因此降级。
+- 内部 cache 的未知值不会被写成 0：目录不存在或存在但为空才是 `0 B`；读不到（权限/IO 错误）记为未知，报告显示「未知」并注明「du 未返回 cache 大小」，汇总里的 cache 合计按下限处理。
 - 能列出外部存储占用较高的应用，以及未安装应用仍保留的外部目录。
 - 应用类候选（app_cache / browser_cache / chat_cache / residue）会附带包级 APK、内部 data 与外部目录证据，但仍是证据，不改变风险或可选择性。
 
@@ -633,7 +634,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-10 / v1.10.2 实测：319 passed, 2 skipped（321 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-10 / v1.10.3 实测：325 passed, 2 skipped（327 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

@@ -393,7 +393,7 @@ Host-side output:
 - `scan_only`: in the file snapshot but not in the index; may be unindexed, hidden or app-private media. **Not an anomaly.**
 - `size_mismatch`: the index may be stale; filesystem wins.
 - `trashed` / `pending`: index state hints only.
-- **Zero-row diagnosis**: each collection is `ok` / `empty` / `zero_unconfirmed` / `zero_mismatch` / `failed` / `skipped`. A successful query with 0 rows has three outcomes: no same-kind files scanned -> `empty` (not a failure); 1 to threshold-1 same-kind files -> `zero_unconfirmed` (cannot prove the library is empty, and not an anomaly); at least the threshold (default 10) -> `zero_mismatch`, the overall status becomes `partial` and the report says the library must not be treated as empty.
+- **Zero-row diagnosis**: each collection is `ok` / `empty` / `zero_unconfirmed` / `zero_mismatch` / `failed` / `skipped`. A successful query with 0 rows has three outcomes: no **cross-checkable** same-kind files scanned -> `empty` (not a failure); 1 to threshold-1 same-kind files -> `zero_unconfirmed` (cannot prove the library is empty, and not an anomaly); at least the threshold (default 10) -> `zero_mismatch`, the overall status becomes `partial` and the report says the library must not be treated as empty.
 - Zero-row cross-checking mirrors what MediaStore actually indexes: media whose path contains a hidden component (`/.xxx`) is not counted, because MediaStore does not index those paths (verified on a real device: `content query` returns no result for images under `.cache`, `.thumbnails` and `.gs`). The excluded count is reported in `crosscheck.hidden_excluded` and in the limitations, never silently dropped.
 - `sources.json` records the actual command, projection, exit code, stderr, row count, attempts and elapsed time for diagnosis.
 
@@ -420,6 +420,7 @@ It runs `pm list packages -f`, a bounded number of `pm path <package>` calls (de
 - Statuses distinguish `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`; unknown data is never written as 0 MB.
 - The base APK is `base.apk` when present. Vendor system apps that use another name (e.g. Huawei `Settings.apk` / `*_signed_entry.apk`) fall back to the first non-`split_*` entry in `pm path` order. When the base is unreadable, `apk_base_bytes` stays unknown and is **never replaced by a readable split**; readable splits are summed into `apk_split_bytes` only.
 - Internal `collected` means `du` completed cleanly. A permission error or an unexplained non-zero exit marks the app `partial` even when some data was read: the value is a lower bound and the report says so. Missing `cache`/`code_cache` directories are normal and do not downgrade the result.
+- Unknown internal cache values are never written as 0: a missing or empty directory is a real `0 B`, while a permission/IO failure stays unknown, is shown as “未知”, and the cache total is treated as a lower bound.
 - Lists top apps by external storage and uninstalled packages that still have external directories.
 - App-related candidates gain package-level evidence only; risk and selectability do not change.
 
@@ -598,7 +599,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-10 / v1.10.2: 319 passed, 2 skipped (321 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
+Measured on 2026-11-10 / v1.10.3: 325 passed, 2 skipped (327 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
