@@ -1,5 +1,71 @@
 # Changelog
 
+## v1.10.3 — 内部 cache 未知值与 empty 文案
+
+### Fixed
+- **内部 cache 的未知值不再写成 0 B**：`du` 明确报「目录不存在」或返回 0（目录存在但为空）时才记 `0`；权限不足、IO 错误或没有返回该路径时记未知（NULL），该应用保持 `partial`。
+  - `internal_cache_bytes` / `internal_code_cache_bytes` 在 SQLite 中存 NULL；只有 `base` 合计可读时才会进入该分支，未知不再被 `or 0` 吞掉。
+  - 汇总只累加已知值，新增 `internal_cache_unknown`（分析摘要）与 `cache_unknown`（manifest）计数；Markdown/HTML 显示「未知」与「du 未返回 cache 大小」，部分已知时标注「合计为下限」。
+  - manifest 的 `internal.cache_bytes` 在没有任何已知值时输出 `null`，不再写 0。
+- **MediaStore `empty` 文案**：由「0 条（未发现同类文件）」改为「0 条（未发现可参与核对的同类文件）」，Markdown 与 HTML 使用同一文案；`crosscheck.note` 的规则说明同步，避免让读者以为隐藏目录也被核对过。
+
+### Tests
+- 新增 6 条回归用例：cache 正常有数据、cache 目录缺失、cache 存在但为空、cache 权限不足（未知且 partial）、code_cache 不可读而 cache 仍已知、empty 文案在 Markdown/HTML 一致。
+
+### Notes
+- 全量 325 passed, 2 skipped（327 collected）。
+- 历史状态目录中旧的 `0` 无法区分「真实为空」与「当时不可读」；重新 `scan` 后才会写入 NULL。
+
+## v1.10.2 — 修正应用存储与 MediaStore 的完整性判定
+
+### Fixed
+- **应用内部存储**：`du -sk` 的退出码与错误输出不再被忽略。此前只要 `du` 打印了 base 合计就标记 `collected`，即使同时存在 `Permission denied`。
+  - 权限错误或无法解释的非零退出 → 该应用 `internal_status=partial`，保留已读到的数值，并在 `internal_error` 写明原因；汇总状态同步降为 `partial`。
+  - `cache` / `code_cache` 不存在（`No such file or directory`）属于正常情况，不会降级。
+  - 没有任何数据时按原因标记 `permission_denied` 或 `unavailable`，不写 0 MB。
+  - 报告新增限制说明：partial 的内部 data 是下限，不是完整占用。
+- **基础 APK / Split APK 口径**：`base.apk` 存在时只认它；厂商系统应用不用该文件名时（真机实测华为 `Settings.apk`、`*_signed_entry.apk`），按 `pm path` 顺序取第一个非 `split_*` 条目为基础 APK。基础 APK 不可读时不再用第一个可读 APK 顶替，`apk_base_bytes` 记为未知，可读的 split 仍单独累加到 `apk_split_bytes`；该应用标记 `partial`，报告说明基础 APK 合计是下限。
+- **MediaStore 零记录**：0 条不再直接判为 `empty`。新增 `zero_unconfirmed`：文件扫描发现 1 个到阈值−1 个同类文件时，既不认定媒体库为空，也不判定为异常；`empty` 只用于文件扫描也没有同类文件的情况。原有 `ok` / `empty` / `zero_mismatch` / `failed` / `skipped` 语义不变。
+- **MediaStore 隐藏路径核对（真机核实后保留排除）**：原 `AND path NOT LIKE '%/.%'` 经真机验证是正确的——MediaStore 不索引任何含隐藏路径组件的文件（`content query` 对 `.cache`、`.thumbnails`、`.gs` 下的图片均返回无结果），若把隐藏目录计入，1022 张主题预览/相册缓存图会被误判成“索引缺失”。本轮保留该排除规则并写入注释与文档，同时新增 `crosscheck.hidden_excluded` 与限制说明，把被排除的数量如实披露，不再静默丢弃。
+- **报告**：Markdown 与 HTML 增加 `zero_unconfirmed` 标签与「零记录待确认」提示；内部 data 为 partial 时显示「数值为下限」，HTML 不会把部分采集描述为完整。
+
+### Tests
+- 新增 17 条回归用例：内部 data 部分权限、命令完全失败、失败且是权限错误、缺失子目录不降级；基础 APK 不可读、只有 split、老式单 APK、华为系统 bundle；零记录 0/1/9/10 矩阵与报告文案；隐藏目录不计入但如实披露、缩略图与 trashed 排除；空间速览的下限口径。
+
+### Real device
+- HONOR HLK-AL00（HarmonyOS 3.0 / Android 10 / SDK 29，USB + ADB，非 Root）：doctor、scan、analyze 全部通过，`coverage=good`。
+- 293 个应用全部识别基础 APK（9.00 GB）与 split（20.78 MB），共 310 个 APK 文件；修正前有 7 个华为系统应用（Settings/Contacts/Phone/Calendar/Clock/Notepad/Tips）被误判为基础 APK 未知。
+- MediaStore：images 4812 行 / 扫描 4914 个可见文件，video 73/73，audio 78/77，`downloads` 集合在该 ROM 不可用（已知限制）；隐藏目录另有 6076 个媒体扩展名文件（6037 张图片等）按规则排除并披露。
+- `iter_tree` 对 `/data` 实测捕获 `Permission denied` 并写入 skipped（第 2 项修复的真机验证）。
+- 内部 data 在非 Root 下按预期标记 `unavailable`，未伪装成 0 MB。
+
+### Notes
+- 全量 319 passed, 2 skipped（321 collected）。
+- 未新增真机验收；`du` 权限降级与 MediaStore 隐藏目录核对仍需真机复测。
+
+## v1.10.1 — 修复特殊缓存守卫不一致与扫描覆盖漏报
+
+### Fixed
+- **issue #1：`files/` 下的隐藏缓存不再被守卫吞掉。** `guard_path` 的 `Android/data` 分支只检查包目录下的第一层名字，`<pkg>/files/GPUCache`、`files/app_webview/Default/Code Cache`、`files/Service Worker`、`files/.qcl` 全部被判 DANGEROUS，v1.10.0 的「隐藏/特殊缓存识别」在真机上因此几乎零命中。
+  - 新增 `special_cache_scope()`：命中 `special_cache_rule` 的目录及其内部文件继承同一结论，执行器逐文件复检时不会再把清单里的文件拒掉。
+  - 风险下限固定为 CAUTION，不会进入 SAFE；只对 `app_cache` / `browser_cache` / `chat_cache` 生效，`residue` / `empty_dirs` 等类别不放宽。
+  - `PROTECTED_DIR_NAMES`（`files`、`app_webview`、`databases`……）改为只检查缓存根以下的相对路径：缓存本身可用，`files/databases`、`files/Downloads`、`files/config.xml` 仍然拒绝。
+  - 文件型 `.qcl` 候选的证据补上规则 id（`tencent-qcl` / `generic-hidden-cache`），与目录型候选一致。
+- **issue #2：`find` / `stat` 的 stderr 不再丢弃。** 以前 `2>/dev/null` 把 `Permission denied` 全部吞掉，`skip_sink` 只能收到超时和 `max_files`，覆盖率继续显示 `good`。
+  - `iter_tree()` 用独立管道 + 线程实时读取 stderr（不与 stdout 混合，避免破坏 `-print0` 流），把权限失败解析成 skipped 记录：路径、原因、「权限不足」都写入快照。
+  - 明细最多保留 200 条，超出后追加一条汇总（「另有 N 个路径权限不足」），不会因为一个被锁目录刷爆报告。
+  - `scan` 覆盖率因此降级为 `partial`，`scan-summary.md` / `report-before.md` / `report-before.html` 写明跳过的路径与原因，不再显示为完整；HTML 覆盖率状态改为中文标签（完整 / 部分覆盖 / 可疑），不再直接输出英文枚举值。
+  - `doctor` 新增 `android_data_sample` 抽样（默认最多 6 个应用目录）与 `android_data_partial_read`：父目录可列举、子目录被 ROM 锁住时会写出限制说明。
+  - 只有 `Permission denied` / `Operation not permitted` 计入 partial；扫描期间的 `No such file or directory` 不降级，避免活跃设备上的正常竞态造成误报。
+  - 同时兼容 toybox 与 GNU 两种报错格式（`find: '/x': Permission denied`、`stat: cannot statx ‘/x’: Permission denied`），覆盖 ADB/Shizuku 与 proot Ubuntu 的 `local` 通路。
+
+### Tests
+- 新增 21 条回归用例：特殊缓存守卫矩阵（含 `files/databases`、`files/Downloads`、DCIM 反例）、候选生成、`tencent-qcl` 规则 id、端到端隔离执行、stderr 解析（toybox/GNU 格式、去重、上限）、`_find_script` 不再重定向、覆盖率 partial、doctor 子目录抽样、HTML 覆盖率中文标签。
+
+### Notes
+- 全量 302 passed, 2 skipped（304 collected）。
+- 未重新做真机验收：issue 里的真机路径（HONOR HLK-AL00 / proot local）需要在 v1.10.1 上复测；复测要点见 issue 回复。
+
 ## v1.10.0 — 扫描覆盖、应用存储、MediaStore 诊断与移动端报告
 
 ### Added

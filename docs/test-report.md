@@ -1,21 +1,21 @@
 # Android 深度清理 Skill — 独立验证测试报告
 
-## 当前版本摘要（v1.10.0，2026-11-09）
+## 当前版本摘要（v1.10.3，2026-11-10）
 
 | 维度 | 当前结果 |
 |---|---|
-| 验证对象 | 本地工作区 v1.10.0 |
-| 本地 Mock | 281 passed / 2 skipped（283 collected） |
+| 验证对象 | 本地工作区 v1.10.3（commit e99732e） |
+| 本地 Mock | 325 passed / 2 skipped（327 collected） |
 | CI | 已通过：ubuntu-22.04 / windows-latest × Python 3.9 / 3.13，4 个作业全部成功 |
-| 本轮改动 | 隐藏缓存规则、APK/split 与应用内部存储、MediaStore 零记录诊断、隔离区 realpath 守卫、HTML 移动端布局 |
-| 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB |
-| 真机写操作演练 | 仅自建文件：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
-| purge 真机结果 | 2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等（0 文件）；purge 后 restore 如实失败 |
-| 令牌重放 | 确认令牌单次使用已生效（rc=3） |
-| 空间速览真机结果 | 设备已用 78.81 GB；文件扫描 11.08 GB（14.1%）；基础 APK 8.98 GB；未解释差额 58.75 GB |
-| MediaStore 真机结果 | 4,965 条索引 / 7.35 GB；4,964 条匹配；`downloads` 集合不可用 |
-| 应用级存储真机结果 | 293 个应用，基础 APK 8.98 GB；49 个应用外部 data 合计 1.92 GB |
-| 安全确认 | 演练后手机测试目录与空隔离目录已删除；未触碰任何用户真实文件 |
+| 本轮改动 | 内部 cache 未知值不再写成 0、MediaStore `empty` 文案与 `zero_unconfirmed`、特殊缓存守卫（files/ 下缓存）、`find` stderr 覆盖率、基础/split APK 口径 |
+| 真实设备只读 | HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29），USB+ADB，v1.10.2 实测 |
+| 真机写操作演练 | 仅自建文件（v1.5.0）：隔离 3/3、验证 3/3、恢复 3/3；purge 2/2 |
+| purge 真机结果 | v1.5.0：2 个文件 / 30 B 永久删除，0 失败；错误令牌 rc=3；重放幂等；purge 后 restore 如实失败 |
+| 令牌重放 | 确认令牌单次使用已生效（v1.5.0 真机 rc=3） |
+| 空间速览真机结果 | v1.10.2：设备已用 79.59 GB；文件扫描 11.35 GB（14.3%）；基础 APK 9.00 GB；未解释差额 59.21 GB |
+| MediaStore 真机结果 | v1.10.2：4,963 条索引 / 7.34 GB；images 4,812 / 扫描 4,914、video 73/73、audio 78/77；`downloads` 集合不可用；隐藏路径 6,076 个不计入核对 |
+| 应用级存储真机结果 | v1.10.2：293 个应用，基础 APK 9.00 GB + split 20.78 MB（310 个 APK 文件）；外部 data 2.15 GB；内部 data 在非 Root 下不可读 |
+| 安全确认 | 真机仅执行只读命令；未触碰任何用户真实文件 |
 | 真实设备清理/恢复 | 仅在自建测试文件上通过；**用户真实数据清理仍未验收** |
 | 真实 HarmonyOS NEXT | 0 台完成验收 |
 | 当前定位 | 只读、隔离、验证、恢复、永久删除内建路径均已在自建文件上跑通；**真实数据清理仍未验收** |
@@ -23,6 +23,35 @@
 阅读说明：当前版本结论只看本节；下方为历史版本记录，数字和被测对象不同属正常。真机验收方法见 [真机验收清单](real-device-test-plan.md)。
 
 ## 历史版本
+
+### v1.10.3 内部 cache 未知值与 empty 文案（2026-11-10）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `app_storage.py` / `app_storage_index.py` / `reports.py` / `html_report.py` / `mock_transport.py` |
+| 内部 cache | 目录不存在或存在但为空记 `0`；权限/IO 错误记 NULL 并标 `partial`；汇总新增 `internal_cache_unknown`，manifest `internal.cache_bytes` 无已知值时是 `null` |
+| 报告口径 | Markdown「含内部 cache 未知（du 未返回 cache 大小）」；HTML 同原因；`empty` 文案统一为「0 条（未发现可参与核对的同类文件）」 |
+| 自动化测试 | 全量 325 passed, 2 skipped（新增 6 个用例） |
+
+### v1.10.2 应用存储与 MediaStore 完整性判定 + 真机复测（2026-11-10）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `app_storage.py` / `app_storage_index.py` / `media_store.py` / `reports.py` / `html_report.py` / `space_story.py` / `mock_transport.py` |
+| 内部 data | `du` 退出码与 stderr 参与判定：权限/IO 失败标 `partial`，缺失 cache/code_cache 不降级 |
+| 基础 APK | `base.apk` 优先，厂商 bundle 取 `pm path` 第一个非 `split_*` 条目；不可读时不使用 split 顶替 |
+| MediaStore | 新增 `zero_unconfirmed`（0 条且同类文件 1 到阈值−1）；隐藏路径不参与核对（真机验证 MediaStore 不索引），新增 `crosscheck.hidden_excluded` 披露数量 |
+| 真机只读 | HLK-AL00 非 Root：coverage=good，34,841 条目 / 28,174 文件 / 11.35 GiB；293/293 应用识别基础 APK；`iter_tree('/data')` 捕获 Permission denied |
+| 自动化测试 | 全量 319 passed, 2 skipped（新增 17 个用例） |
+
+### v1.10.1 特殊缓存守卫与扫描覆盖（2026-11-10）
+
+| 项目 | 结果 |
+|---|---|
+| 改动范围 | `rules.py` / `transport.py` / `device.py` / `analyzer.py` / `html_report.py` |
+| 特殊缓存 | `files/GPUCache`、`files/app_webview/.../Code Cache`、`files/.qcl` 不再被守卫吞掉；风险下限 CAUTION，`files/databases` 等仍拒绝 |
+| 扫描覆盖 | `find`/`stat` stderr 保留，权限失败写入 skipped，覆盖率降为 `partial`；doctor 抽样 Android/data 子目录 |
+| 自动化测试 | 全量 302 passed, 2 skipped（新增 21 个用例） |
 
 ### v1.10.0 扫描覆盖、应用存储、MediaStore 与移动端报告（2026-11-09）
 

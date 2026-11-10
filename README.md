@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.10.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.10.3`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -441,7 +441,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 
 **为什么不是完整应用占用**：`StorageStatsManager` 需要应用进程权限，shell 不能直接调用；`dumpsys diskstats` 会写系统缓存文件，违反只读原则，因此不使用。root/su 下的 `du` 统计是有上限的抽样，不是全量；split APK 查询也有应用数量上限。所以这里的“已知合计”不能当作应用总占用，也不能与设备已用空间相加。
 
-历史真机验证（v1.5.0 / HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。v1.10.0 新增的 split APK 与内部 data 统计仅完成 mock/单元验证，**未重新做真机验收**。
+历史真机验证（v1.5.0 / HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。v1.10.2 已在同一台设备（非 Root）重新验收：293/293 个应用识别基础 APK 9.00 GB + split 20.78 MB（310 个 APK 文件），外部 data 2.15 GB；内部 data 在普通 shell 下按预期不可读。
 
 ### 隐藏与特殊缓存（v1.10.0，v1.10.1 修复）
 
@@ -680,8 +680,8 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 隔离与恢复依赖本机状态目录；状态目录丢失后无法自动恢复。
 - 目录档案按路径识别，重命名会显示为“未再出现 + 新增”；扫描不完整或环境变化时不做消失判断。
 - 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
-- 目录档案与覆盖率改动尚未完成真机验收。
-- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对：同类文件达到阈值才标记 `zero_mismatch`，1 个到阈值−1 个标记 `zero_unconfirmed`（无法确认为空），完全没有同类文件才标记 `empty`；隐藏目录不参与核对（MediaStore 不索引），被排除的数量单独列出。
+- 目录档案与覆盖率已在 1 台真机（HLK-AL00 / Android 10）通过只读验证：34,841 条目、28,174 文件、11.35 GiB，`coverage=good`；更多 OEM 仍需验收。
+- MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对：可参与核对的同类文件达到阈值才标记 `zero_mismatch`，1 个到阈值−1 个标记 `zero_unconfirmed`（无法确认为空），没有可核对文件才标记 `empty`；隐藏目录不参与核对（MediaStore 不索引），被排除的数量单独列出。
 - 扫描覆盖以 `find` 的 stderr 为准：子目录被 ROM 锁住时覆盖率降为 `partial` 并列出跳过路径；`doctor` 只抽样最多 6 个 `Android/data` 应用目录，未抽样到的应用仍可能少算，报告不会替它宣称完整。
 - 应用级存储：基础 APK 不需要 Root；split APK 查询有应用数量上限；内部 data/cache 只有在 root/su 且存在 `du` 时才做有上限的只读统计。普通 shell 下明确标记为不可读。未使用会写系统缓存的 `dumpsys diskstats`，也未开发 StorageStatsManager 辅助 APK。
 - 隐藏/特殊缓存只按“名称/扩展名 + 允许根目录”识别，且全部是 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。

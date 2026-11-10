@@ -359,9 +359,9 @@ python android-deep-clean\scripts\adc.py scan --state .tmp\state --transport moc
 - 真实 Android / HarmonyOS 设备尚未完成端到端验收；发布门槛见项目 docs/real-device-test-plan.md，未满足前不得宣称正式可用。
 - local 通路在 proot/容器中不会被误判为 Android Root；容器里能读 Android/data 也不代表 scoped storage 下普通应用可读。
 - HarmonyOS NEXT 无法按文件扫描其他应用缓存；只能处理公共目录与媒体库；不使用 Android MediaStore；`bm clean` 未接入执行器。
-- MediaStore 媒体索引依赖 `content query`，可用性受 shell 权限、OEM、Android 版本影响；已在 1 台 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）完成只读验证，该 ROM 的 `downloads` 集合不可用，更多机型仍需验收。索引延迟、多用户、工作资料、隐藏目录、部分 SD 卡卷和路径大小写差异会造成核对差异；索引缺失或差异不得作为删除依据。
-- 应用级存储只统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 仅在 root/su、`du` 与 `pm path` 可用时按上限采集。内部 data 的 `collected` 表示 `du` 完整成功，出现权限错误或无法解释的非零退出只标记 `partial`（数值是下限）；基础 APK 不可读时 `apk_base_bytes` 为未知，不能用 split APK 顶替。已知合计不是应用总占用，不能与设备已用空间相加，也不能据此认定某个应用“占用异常”。
-- HarmonyOS NEXT/兼容版的 hdc/adb 真机行为尚未验证；mock 通过不等于真机通过。
+- MediaStore 媒体索引依赖 `content query`，可用性受 shell 权限、OEM、Android 版本影响；已在 1 台 HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）完成只读验证，该 ROM 的 `downloads` 集合不可用，更多机型仍需验收。索引延迟、多用户、工作资料、隐藏目录、部分 SD 卡卷和路径大小写差异会造成核对差异；索引缺失或差异不得作为删除依据。隐藏路径不参与零记录核对（MediaStore 不索引），被排除的数量会单独说明。
+- 应用级存储只统计基础 APK 与外部 data/media/obb；内部 data/cache 与 split APK 仅在 root/su、`du` 与 `pm path` 可用时按上限采集。内部 data 的 `collected` 表示 `du` 完整成功，出现权限错误或无法解释的非零退出只标记 `partial`（数值是下限）；内部 cache 读不到时记为未知，不得写成 `0 B`；基础 APK 不可读时 `apk_base_bytes` 为未知，不能用 split APK 顶替。已知合计不是应用总占用，不能与设备已用空间相加，也不能据此认定某个应用“占用异常”。
+- HarmonyOS NEXT 的 hdc 真机行为尚未验证；兼容版的 adb 只读链路已在 HLK-AL00 通过（doctor/scan/analyze），清理与恢复仍未在真实数据上验收；mock 通过不等于真机通过。
 - atime 在 Android 上通常不可靠，年龄判断主要用 mtime；不能把“未访问”当唯一证据。
 - 无法识别所有应用私有格式/加密缓存；未知内容一律保留。
 - 相似图片（非完全重复）需要图像内容复核，本 Skill 只做完全重复与截图/媒体候选，不自动删相似图。

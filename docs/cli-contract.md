@@ -132,9 +132,19 @@ device JSON 字段：`serial, sdk, release, manufacturer, model, build_type, abi
 
 ## v1.10.0 扫描、应用存储、MediaStore、隔离区与移动端
 
-- MediaStore：每个集合独立状态 `ok|empty|zero_mismatch|failed|skipped`；查询成功但 0 条且文件扫描同类文件达到 `zero_mismatch_min_files`（默认 10）时，集合为 `zero_mismatch`、整体 `partial`；没有同类文件时为 `empty`，不是失败。`sources.json` 记录 command、projection、exit_code、stderr、rows、attempts、elapsed。
+- MediaStore：每个集合独立状态 `ok|empty|zero_mismatch|failed|skipped`；查询成功但 0 条且文件扫描同类文件达到 `zero_mismatch_min_files`（默认 10）时，集合为 `zero_mismatch`、整体 `partial`；没有同类文件时为 `empty`，不是失败。`sources.json` 记录 command、projection、exit_code、stderr、rows、attempts、elapsed。（v1.10.2 起新增 `zero_unconfirmed` 与 `crosscheck.hidden_excluded`，以文末 v1.10.1–v1.10.3 节为准。）
 - 应用存储：`pm list packages -f` + 有上限的 `pm path`；APK 文件状态 `ok|missing|permission_denied|stat_failed`；split 状态 `collected|partial|disabled`。`/data/data` 只在 root/su 且存在 `du` 时做有上限的只读统计；普通 shell 明确 `unavailable`，禁止使用 `dumpsys diskstats`。
 - 特殊缓存：必须同时匹配名称/扩展名与允许根目录（`/sdcard/Android/data` 或已知聊天根目录）；`.qcl` 等候选一律 CAUTION/待确认，不进入 SAFE；DCIM 等用户媒体目录下的 `.cache` 不产生缓存候选。
 - 隔离区：execute 写入 `quarantine_real_roots`；purge/restore/verify 校验隔离根真实路径基线、隔离文件父目录真实路径；restore 目标父目录必须与记录路径 display-equivalent；无法解析 realpath 时拒绝。操作前再次 realpath 以缩小 TOCTOU 窗口。
 - HTML：640px / 340px 断点；320/360/390/430/1280 实测无页面级横向溢出；表格在 `.scroll` 内用 `width:max-content` 横向滚动；目录为单行横向滚动。
 - 新配置：`media_store.zero_crosscheck_min_files`、`app_storage.split_apk_max_packages`、`app_storage.internal_max_packages`。
+
+## v1.10.1–v1.10.3 口径与状态补充
+
+以下条目覆盖上文相同主题的旧说明，以本节为准。
+
+- 特殊缓存：`Android/data/<pkg>/files/**` 下命中 `special_cache_rule` 的目录与文件均可进入候选；`special_cache_scope()` 让缓存内部文件继承缓存根的结论，执行器逐文件复检不会拒绝。风险下限固定 CAUTION，仅对 `app_cache|browser_cache|chat_cache` 生效；`files/databases`、`files/Downloads` 等非缓存路径继续拒绝。
+- 扫描覆盖：`find`/`stat` 的 stderr 不再丢弃，权限失败写入 skipped 并把覆盖率降为 `partial`；`doctor.capabilities` 新增 `android_data_partial_read` 与 `android_data_sample`（抽样最多 6 个应用目录）。
+- 应用存储：基础 APK 优先 `base.apk`，厂商 bundle 按 `pm path` 顺序取第一个非 `split_*` 条目；基础 APK 不可读时 `apk_base_bytes=null`，不使用 split 顶替。内部 `du` 的退出码与错误参与判定：权限/IO 失败标 `partial`，`cache`/`code_cache` 不存在属正常情况。
+- 内部 cache：目录不存在或存在但为空才是 `0`；读不到时 `internal_cache_bytes` / `internal_code_cache_bytes` 写 NULL，汇总新增 `internal_cache_unknown`，manifest 新增 `internal.cache_unknown`，`internal.cache_bytes` 没有已知值时为 `null`。
+- MediaStore：集合状态新增 `zero_unconfirmed`（0 条且可核对同类文件为 1 到阈值−1）；`crosscheck` 新增 `hidden_excluded`；`empty` 的显示文案为「0 条（未发现可参与核对的同类文件）」。

@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.10.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.10.3`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -426,7 +426,7 @@ It runs `pm list packages -f`, a bounded number of `pm path <package>` calls (de
 
 **Why it is partial**: a plain ADB shell lacks StorageStatsManager permissions for other apps' internal data. `dumpsys diskstats` writes a system cache file, so it is not used because scans must stay read-only. Root/su internal stats use a bounded read-only `du` sample, not a full scan; split APK queries also have an app budget. The known total is not the app's total footprint and must not be added to device-used space.
 
-Historical real-device result (v1.5.0 / HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. The v1.10.0 split-APK and internal-data paths are mock/unit tested only and were **not re-validated on a real device**.
+Historical real-device result (v1.5.0 / HONOR HLK-AL00 / Android 10): 293 installed apps, 8.98 GB base APKs; 49 apps with external data totaling 1.92 GB; one uninstalled residue directory (109 B); external media/obb were 0. v1.10.2 re-validated on the same device (no root): 293/293 apps resolved to 9.00 GB base APKs + 20.78 MB splits (310 APK files), 2.15 GB external data; internal data stays unreadable under a plain shell as expected.
 
 ### Space story and candidate explanations (v1.6.0)
 
@@ -645,8 +645,8 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - Quarantine and restore depend on the local state directory; losing it prevents automatic restore.
 - The directory archive is path-based: a rename appears as "missing + new". Incomplete scans and environment changes suppress vanished conclusions.
 - The archive tracks directories ≥10 MiB and app directories by default; app-version detection needs `pm list packages --show-versioncode`.
-- The directory archive and coverage changes have not been accepted on a real device.
-- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan: at least the threshold of same-kind files becomes `zero_mismatch`, 1 to threshold-1 becomes `zero_unconfirmed` (cannot prove empty), and no same-kind files becomes `empty`. Hidden paths are excluded because MediaStore does not index them, and the excluded count is reported separately.
+- The directory archive and coverage passed read-only validation on one real device (HLK-AL00 / Android 10): 34,841 entries, 28,174 files, 11.35 GiB, `coverage=good`; other OEMs still need validation.
+- The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan: at least the threshold of cross-checkable same-kind files becomes `zero_mismatch`, 1 to threshold-1 becomes `zero_unconfirmed` (cannot prove empty), and no cross-checkable same-kind files becomes `empty`. Hidden paths are excluded because MediaStore does not index them, and the excluded count is reported separately.
 - App-level storage: base APKs need no root; split-APK discovery has an app budget; internal data/cache are only sampled with read-only `du` under root/su. Plain shells are explicitly marked unavailable. `dumpsys diskstats` is not used because it writes a system cache; no StorageStatsManager helper APK is included.
 - Hidden/special caches are matched only by name/extension plus an allowed root, and every such candidate is CAUTION/review-required. Vendor top-level directories may contain user data and are not auto-classified as cache.
 - Scan coverage follows `find` stderr: a locked subdirectory downgrades coverage to `partial` and is listed by path. `doctor` samples at most 6 `Android/data` app folders, so unsampled apps can still be under-counted; the report never claims completeness for them.

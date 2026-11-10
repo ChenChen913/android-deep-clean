@@ -34,14 +34,16 @@ MediaStore 辅助索引（v1.4.0）：
 - `downloads` 集合仅 Android 10 / API 29+ 尝试；`relative_path`、`is_pending` 为 API 29+；`is_trashed` 为 API 30+。字段被设备拒绝时自动降级到更小投影。
 - Termux `local` 通常没有媒体读取权限，会记为不可用；ADB/Shizuku 也可能因 OEM 收紧失败，报告只写差异，不据此删除文件。
 - 媒体索引不保证覆盖其他用户、工作资料、隐藏目录、应用私有媒体或所有 SD 卡卷；其大小与文件扫描、应用统计口径不同，不能相加。
+- 零记录核对只统计「可参与核对」的文件：隐藏路径不计入（MediaStore 不索引），排除数量写入 `crosscheck.hidden_excluded`；0 条按 `empty` / `zero_unconfirmed` / `zero_mismatch` 分档。
 - 真机验证：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10 / SDK 29）只读通过；图片/视频/音频可采集，`downloads` 集合在该 ROM 返回 unknown URL，已降级为部分可用；路径大小写差异已按共享存储不敏感处理。
 
-应用级存储（v1.10.0）：
+应用级存储（v1.10.0 起，v1.10.2 口径更新）：
 
 - `scan` 使用 `pm list packages -f` 与批量 `stat` 读取基础 APK；对有上限的应用（默认 120 个）执行 `pm path <package>` 识别 split APK；外部 data/media/obb 由文件扫描统计。
 - 应用内部 data/cache 需要 StorageStatsManager 权限或 Root。普通 ADB shell 标记 `unavailable`；root/su 且存在 `du` 时，对默认最多 60 个应用做只读 `du` 抽样。本工具不使用会写系统缓存文件的 `dumpsys diskstats`，也不要求安装辅助 APK。
 - APK 状态区分 `ok` / `partial` / `permission_denied` / `missing` / `no_path` / `stat_failed`；split 查询有应用数量上限；“已知合计”不是应用总占用，不能与设备已用空间相加。
-- 历史真机验证（v1.5.0）：293 个应用，基础 APK 8.98 GB，外部 data 1.92 GB；v1.10.0 的 split 与内部 data 仅完成 mock/单元验证，未重新真机验收。
+- 内部 cache/code_cache：目录不存在或存在但为空记 `0`；读不到时记未知（NULL），不写成 `0 B`，汇总的 cache 合计只累加已知值并标注下限。
+- 历史真机验证（v1.5.0）：293 个应用，基础 APK 8.98 GB，外部 data 1.92 GB。v1.10.2 在同一台 HLK-AL00（非 Root）重新验收：293/293 个应用识别基础 APK 9.00 GB + split 20.78 MB，外部 data 2.15 GB；内部 data 在普通 shell 下仍不可读。
 
 Android 版本差异：
 - Android 10：默认 scoped storage，但 target 29 可临时退出；MediaStore 新增 Downloads 集合。

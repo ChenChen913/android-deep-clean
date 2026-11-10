@@ -21,7 +21,7 @@
 - 验证结果（源文件消失/隔离文件存在/大小一致）；
 - 存储可用空间变化（注意系统噪声）；
 - 剩余问题、建议复查。
-- 媒体集合状态：ok / empty / zero_mismatch / failed / skipped；0 条但文件扫描有同类文件时标记异常。
+- 媒体集合状态：ok / empty / zero_unconfirmed / zero_mismatch / failed / skipped；0 条时按「可参与核对」的同类文件数分档：0 个为 empty，1 到阈值−1 为 zero_unconfirmed，达到阈值（默认 10）为 zero_mismatch。隐藏路径不参与核对（MediaStore 不索引），排除数量写入 `crosscheck.hidden_excluded` 并在限制中说明。
 - 应用存储：基础/split APK、内部 data（root/su 时）、外部 data/media/obb，以及 permission_denied / partial / unavailable 状态。
 - 隔离区：realpath 基线、父目录校验、哈希校验状态（通过 / 仅大小 / 未完成）。
 

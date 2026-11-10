@@ -11,7 +11,7 @@
 
 ## 0. 双通路相关限制（v1.1）
 
-- 电脑端 ADB 通路尚未在本机真机实测（当前环境无 adb/设备）；设备发现、多设备解析、身份绑定、备份/哈希/导出已用 mock 与单元测试覆盖。
+- 电脑端 ADB 通路已在 1 台真机（HONOR HLK-AL00 / HarmonyOS 3.0 兼容版 / Android 10）完成 doctor → scan → analyze 只读实测（v1.10.2）；设备发现、多设备解析、身份绑定、备份/哈希/导出仍以 mock 与单元测试覆盖为主。
 - ADB shell 对 Android/data 的可见性依 ROM/版本而异；doctor 只按实际探测报告，不保证所有 Android 11+ 设备都可读。
 - 电脑备份为单文件复制（pull）；超大文件/大量文件会较慢，且需要电脑磁盘空间。
 - 多设备身份绑定使用 serial+fingerprint+model+sdk 短哈希；同一设备刷机/改指纹后计划会失效，需要重新扫描。
@@ -59,13 +59,13 @@
 - 隔离区路径：execute 记录 `quarantine_real_roots`；purge/restore/verify 用 realpath 校验根、父目录与恢复目标。realpath 检查缩小了 TOCTOU 窗口，但 adb shell 无法提供 `openat/O_NOFOLLOW` 级别的原子保证；无法解析真实路径时拒绝操作。
 - 应用内部 data：只有 root/su 且存在 `du` 时才做有上限的只读抽样（默认 60 个应用），不是全量；普通 shell 标记 unavailable，不使用 `dumpsys diskstats`。内部统计使用 `/data/data`（通常指向 `/data/user/0`），不重复扫描 `/data/user`。
 - split APK：`pm path` 查询有应用数量上限（默认 120），超出后只统计基础 APK 并标记 partial。
-- MediaStore：0 条结果会与文件扫描交叉核对；同类文件达到阈值才标记 `zero_mismatch`，低于阈值标记 `empty`。索引延迟、权限、OEM Provider 差异仍可能导致误判，报告保留原始查询命令与错误。
+- MediaStore：0 条结果会与文件扫描交叉核对；可达核对的同类文件达到阈值才标记 `zero_mismatch`，1 个到阈值−1 个标记 `zero_unconfirmed`（无法确认为空），没有可核对文件才标记 `empty`。隐藏路径不参与核对（MediaStore 不索引），被排除数量单独披露。索引延迟、权限、OEM Provider 差异仍可能导致误判，报告保留原始查询命令与错误。
 - 特殊缓存：只按“名称/扩展名 + 允许根目录”识别，全部为 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。
 - 应用可能在清理后立即重建缓存；verify 可能看到源路径重新出现，报告为异常但不算数据丢失。
 - 不处理系统级清理（系统缓存分区、ART 编译缓存等）。
 
 ### 平台
-- 主要验证环境为 Windows + Python 3.13 + mock；真机 ADB 端到端尚未在本环境执行。
+- 主要验证环境为 Windows + Python 3.13 + mock；真机 ADB 只读链路（doctor/scan/analyze）已在 HLK-AL00 上执行，清理/恢复仍只在自建测试文件上验证。
 - 未在 Android 5–9 老设备上实测。
 - 未在微信/QQ 最新版本真机路径上完整验证。
 - HTML 移动端已用 Chromium 在 320/360/390/430/1280 视口检查，未在真实 iOS Safari、微信内置浏览器和国产浏览器上逐一验收。

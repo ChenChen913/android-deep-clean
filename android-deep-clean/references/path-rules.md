@@ -51,6 +51,7 @@
 - .qcl、.cache、.ucache、.webcache、Code Cache、GPUCache、Service Worker、CacheStorage：仅在 /sdcard/Android/data 或已知聊天根目录内识别；一律 CAUTION/待确认，不进入 SAFE。
 - .qcl 在腾讯/QQ 应用目录下命中 `tencent-qcl` 规则；其他应用下标记“来源未确认”，仍为 CAUTION。
 - 不在 DCIM、Documents 等用户媒体目录按隐藏名称清理；厂商顶层目录（MIUI/Huawei/OPPO/vivo）可能混有用户数据，不自动认定为缓存。
+- v1.10.1 起，`Android/data/<pkg>/files/GPUCache`、`files/app_webview/Default/Code Cache`、`files/.qcl` 等真实位置也会进入候选；`special_cache_scope()` 让缓存内部文件沿用同一结论。`files/databases`、`files/Downloads` 等非缓存路径仍被拒绝。
 
 ### 卸载残留
 - 判断：pm list packages 已安装集合中不存在该包；pm list packages -u 可能仍列出残留记录。

@@ -7,7 +7,7 @@
 | 系统 | 版本 | 运行环境 | 电脑端连接 | 手机端 Agent | 清理能力 | 验证状态 |
 |---|---|---|---|---|---|---|
 | Android | 7+（建议 10+） | AOSP | adb | Termux / Shizuku / Root | 完整 Android 规则 | 已有 mock 全链路；真机待冒烟 |
-| HarmonyOS 兼容版 | 1.x–4.x | 保留 Android 运行时 | adb | Termux / Shizuku 可用 | 与 Android 相同 | 官方文档确认 adb；mock 已验证识别，真机待验证 |
+| HarmonyOS 兼容版 | 1.x–4.x | 保留 Android 运行时 | adb | Termux / Shizuku 可用 | 与 Android 相同 | 官方文档确认 adb；HLK-AL00（3.0 兼容版）真机只读已通过（doctor/scan/analyze） |
 | HarmonyOS NEXT | 5.x 及后续 | 原生鸿蒙 | hdc | **不支持** | 公共目录 + 媒体库 | 已完成 mock 全链路；**真机未验证** |
 
 官方资料明确：HarmonyOS 3.1/4.0 及以下使用 adb 调试，HarmonyOS 5.0 及以上使用 hdc；NEXT 不再兼容 Android APK。
