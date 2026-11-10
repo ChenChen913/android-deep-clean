@@ -395,3 +395,55 @@ def test_browser_code_cache_is_caution(env):
     assert item["category"] == "browser_cache"
     assert item["risk"] == "CAUTION"
     assert any("特殊缓存" in entry["text"] for entry in item["evidence"])
+
+
+# ---------------------------------------------------------------- issue #1
+# Real WebView/Chromium caches sit below files/app_webview/..., which the guard
+# used to reject before the special-cache rule could ever run.
+
+
+def test_special_cache_under_files_becomes_caution_candidate(env):
+    cache = "/sdcard/Android/data/com.installed.app/files/GPUCache"
+    env.phone.file(cache + "/data_0", size=90_000)
+
+    _analyze(env)
+    item = env.require_item("app_cache")
+    assert item["primary_path"] == cache
+    assert item["risk"] == "CAUTION"
+    assert item["ai_review_required"] is True
+    assert any(entry["code"] == "special_cache_rule" for entry in item["evidence"])
+    assert _file_paths(env, item) == {cache + "/data_0"}
+
+
+def test_webview_code_cache_under_files_becomes_candidate(env):
+    path = "/sdcard/Android/data/com.installed.app/files/app_webview/Default/Code Cache"
+    env.phone.file(path + "/js/app.js", size=4_000)
+
+    _analyze(env)
+    item = env.require_item("app_cache")
+    assert item["primary_path"] == path
+    assert item["risk"] == "CAUTION"
+
+
+def test_protected_files_under_files_stay_out_of_candidates(env):
+    env.phone.file("/sdcard/Android/data/com.installed.app/files/databases/user.db", size=300)
+    env.phone.file("/sdcard/Android/data/com.installed.app/files/Downloads/big.bin", size=900_000)
+    env.phone.file("/sdcard/Android/data/com.installed.app/files/config.xml", size=400)
+
+    analysis = _analyze(env)
+    assert analysis["items"] == []
+
+
+def test_qcl_under_tencent_files_uses_tencent_rule(env):
+    env.set_packages(installed=["com.installed.app", "com.tencent.mobileqq"])
+    path = "/sdcard/Android/data/com.tencent.mobileqq/files/.qcl"
+    env.phone.dir(path)
+    env.phone.file(path + "/cache.dat", size=5_000)
+
+    _analyze(env)
+    items = [item for item in env.analysis_items() if item["primary_path"] == path]
+    assert items, "files/.qcl 应产出候选"
+    evidence = {entry["code"]: entry["text"] for entry in items[0]["evidence"]}
+    assert "tencent-qcl" in evidence["special_cache"]
+    assert items[0]["risk"] == "CAUTION"
+    assert items[0]["ai_review_required"] is True

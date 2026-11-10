@@ -436,13 +436,14 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 
 历史真机验证（v1.5.0 / HONOR HLK-AL00 / Android 10）：293 个已安装应用，基础 APK 8.98 GB；49 个应用有外部 data，合计 1.92 GB；未安装应用遗留外部目录 1 个（109 B）；外部 media/obb 为 0。v1.10.0 新增的 split APK 与内部 data 统计仅完成 mock/单元验证，**未重新做真机验收**。
 
-### 隐藏与特殊缓存（v1.10.0）
+### 隐藏与特殊缓存（v1.10.0，v1.10.1 修复）
 
 - 扫描使用 `find` 遍历，不跳过隐藏目录/文件；分析阶段新增 `gen_special_caches()`。
 - 规则同时要求“名称/扩展名 + 允许的根目录”：`.qcl`、`.cache`、`.ucache`、`.webcache`、`Code Cache`、`GPUCache`、`Service Worker`、`CacheStorage` 等只在 `/sdcard/Android/data` 或已知聊天根目录内识别。
 - 所有特殊缓存候选都是 **CAUTION**，`ai_review_required=true`，不会进入 SAFE。`.qcl` 在腾讯/QQ 应用目录下使用更具体的规则，其他应用下标记“来源未确认”。
 - 不在 DCIM、Documents 等用户媒体目录按隐藏名称清理；数据库、配置、账号、离线内容仍由 `guard_path` 保护。
 - 厂商自定义顶层目录（MIUI/Huawei/OPPO/vivo 等）可能混有用户数据，未自动认定为缓存；只处理 `Android/data` 下结构明确的缓存。
+- v1.10.1 修复：守卫以前只认包目录下的第一层名字，`files/GPUCache`、`files/app_webview/Default/Code Cache` 等真实 WebView 缓存位置全部被拒。现在 `special_cache_scope()` 让缓存及其内部文件沿用同一结论，风险下限仍是 CAUTION；`files/databases`、`files/Downloads` 等非缓存路径继续拒绝。
 
 ### 空间去向速览与候选解释（v1.6.0）
 
@@ -626,7 +627,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-09 / v1.10.0 实测：281 passed, 2 skipped（283 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-10 / v1.10.1 实测：302 passed, 2 skipped（304 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
@@ -674,6 +675,7 @@ A：所有设备命令必须加 `--serial`。计划、选择、执行都绑定�
 - 目录档案默认只跟踪 ≥10 MiB 的目录与应用目录；应用版本变化识别依赖设备支持 `pm list packages --show-versioncode`。
 - 目录档案与覆盖率改动尚未完成真机验收。
 - MediaStore 媒体索引依赖 `content query`，其可用性受 shell 权限、OEM 和 Android 版本影响；已在 1 台 HarmonyOS 3.0 兼容版真机验证，更多 OEM/Android 版本仍需验收。该 ROM 的 `downloads` 集合不可用；索引延迟、多用户、工作资料、隐藏目录和部分 SD 卡卷会造成核对差异。0 条结果会与文件扫描交叉核对，只有同类文件达到阈值时才标记 `zero_mismatch`。
+- 扫描覆盖以 `find` 的 stderr 为准：子目录被 ROM 锁住时覆盖率降为 `partial` 并列出跳过路径；`doctor` 只抽样最多 6 个 `Android/data` 应用目录，未抽样到的应用仍可能少算，报告不会替它宣称完整。
 - 应用级存储：基础 APK 不需要 Root；split APK 查询有应用数量上限；内部 data/cache 只有在 root/su 且存在 `du` 时才做有上限的只读统计。普通 shell 下明确标记为不可读。未使用会写系统缓存的 `dumpsys diskstats`，也未开发 StorageStatsManager 辅助 APK。
 - 隐藏/特殊缓存只按“名称/扩展名 + 允许根目录”识别，且全部是 CAUTION/待确认；厂商自定义顶层目录可能混有用户数据，未自动认定为缓存。
 - 隔离区路径校验使用 `realpath` 缩小 TOCTOU 窗口，但 adb shell 无法提供 `openat/O_NOFOLLOW` 级别的原子保证；无法解析真实路径时一律拒绝操作。

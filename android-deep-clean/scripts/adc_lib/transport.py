@@ -20,6 +20,7 @@ import shlex
 import shutil
 import stat as stat_module
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -41,6 +42,10 @@ STAT_FORMAT = "%f|%s|%Y|%X|%Z|%i|%d|%h|%a|%u|%n"
 _STAT_FIELDS = 11
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 _ADB_STATES = {"device", "unauthorized", "offline", "recovery", "sideload", "bootloader", "no"}
+_SCAN_ERR_RE = re.compile(r"^(?:find|stat|ls|du|xargs):\s*(?P<path>.+?):\s*(?P<message>.+)$")
+_SCAN_PERMISSION_MARKERS = ("Permission denied", "Operation not permitted", "permission denied")
+_SCAN_ERR_PREFIXES = ("cannot statx ", "cannot stat ", "cannot access ", "cannot open directory ", "cannot read ")
+_SCAN_SKIP_LIMIT = 200
 _ADB_STATE_LABELS = {
     "device": "已授权，可执行 adb shell",
     "unauthorized": "未授权：请在手机屏幕上允许此电脑的 USB 调试",
@@ -122,6 +127,49 @@ def parse_stat_line(line: str) -> Entry | None:
         uid=_int_or_none(uid),
         ext=ext_of(name),
     )
+
+
+def parse_scan_errors(lines: Iterable[str], *, root: str = "") -> tuple[list[dict[str, str]], int]:
+    """Turn ``find``/``stat`` stderr into skip records for unreadable paths.
+
+    ``find`` keeps walking when a subdirectory cannot be opened, so a scan can
+    silently miss a whole app's data while the coverage report still says
+    "good".  Only permission failures are reported here: transient "No such
+    file" races during an active scan must not downgrade coverage.
+
+    Returns ``(records, denied_total)`` where ``records`` is capped at
+    ``_SCAN_SKIP_LIMIT`` and ``denied_total`` counts every distinct path.
+    """
+    records: list[dict[str, str]] = []
+    seen: set[str] = set()
+    denied = 0
+    for raw in lines:
+        text = (raw or "").strip()
+        if not text:
+            continue
+        match = _SCAN_ERR_RE.match(text)
+        if not match:
+            continue
+        path = match.group("path").strip()
+        # GNU coreutils/phrasebook wording, e.g. "stat: cannot statx '/x': ..."
+        for prefix in _SCAN_ERR_PREFIXES:
+            if path.startswith(prefix):
+                path = path[len(prefix):].strip()
+                break
+        # toybox uses '...', GNU find uses ‘...’ (U+2018/2019) when locales allow.
+        path = path.strip("'\"‘’“”")
+        message = match.group("message").strip()
+        if not path.startswith("/"):
+            continue
+        if not any(message.startswith(marker) for marker in _SCAN_PERMISSION_MARKERS):
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        denied += 1
+        if len(records) < _SCAN_SKIP_LIMIT:
+            records.append({"path": path, "reason": f"权限不足，无法读取（{message}）", "root": root})
+    return records, denied
 
 
 class Transport:
@@ -429,13 +477,16 @@ class ShellTransport(Transport):
             find_expr += f" -maxdepth {int(max_depth)}"
         if clauses:
             find_expr += " \\( " + " -o ".join(clauses) + " \\) -prune -o"
-        find_expr += " -print0 2>/dev/null"
+        find_expr += " -print0"
+        # stderr is intentionally NOT redirected: find keeps walking after a
+        # "Permission denied" on a subdirectory, and those lines are the only
+        # evidence that part of the tree was skipped.  iter_tree() drains them
+        # into skip_sink so coverage degrades to "partial".
         # xargs batches keep the per-file stat overhead low on toybox.
         return (
             find_expr
             + " | xargs -0 -n 200 stat -c "
             + shell_quote(STAT_FORMAT)
-            + " 2>/dev/null"
         )
 
     def iter_tree(
@@ -455,7 +506,9 @@ class ShellTransport(Transport):
             proc = subprocess.Popen(
                 argv,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                # stderr stays on its own pipe: merging it into stdout would
+                # corrupt the NUL-delimited path stream that find emits.
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -467,6 +520,41 @@ class ShellTransport(Transport):
             raise TransportError(f"无法启动设备扫描进程：{exc}") from exc
         count = 0
         stderr_tail: list[str] = []
+        scan_errors: list[str] = []
+        reported = False
+
+        def _drain_stderr() -> None:
+            stream = proc.stderr
+            if stream is None:
+                return
+            try:
+                for raw in stream:
+                    line = raw.strip()
+                    if line:
+                        scan_errors.append(line[:300])
+                        if len(scan_errors) > 500:
+                            del scan_errors[:250]
+            except Exception:  # noqa: BLE001 - draining must never break a scan
+                pass
+
+        reader = threading.Thread(target=_drain_stderr, name="adc-scan-stderr", daemon=True)
+        reader.start()
+
+        def report_scan_errors() -> None:
+            nonlocal reported
+            if reported or skip_sink is None:
+                return
+            reported = True
+            records, denied = parse_scan_errors(scan_errors, root=root)
+            skip_sink.extend(records)
+            if denied > len(records):
+                skip_sink.append({
+                    "path": root,
+                    "reason": f"另有 {denied - len(records)} 个路径权限不足（明细已省略）",
+                    "root": root,
+                })
+            stderr_tail.extend(scan_errors[-20:])
+
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -497,6 +585,8 @@ class ShellTransport(Transport):
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+            reader.join(timeout=5)
+            report_scan_errors()
             if proc.returncode not in (0, None) and count == 0:
                 tail = " | ".join(stderr_tail[-5:])
                 raise TransportError(f"扫描 {root} 失败（退出码 {proc.returncode}）：{tail[:800]}")

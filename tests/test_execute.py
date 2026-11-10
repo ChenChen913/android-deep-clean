@@ -1223,3 +1223,20 @@ def test_md5_only_device_does_not_false_reject(env):
     payload = purged.json()
     assert payload["purged_files"] == 1
     assert payload["hash_unavailable_files"] == 1, "md5 cannot be compared with a SHA-256 baseline"
+
+
+def test_special_cache_under_files_can_be_quarantined(env):
+    """issue #1: the executor re-guards every child file, so a cache below
+    files/ must stay executable end to end, not just visible in the report."""
+    cache = "/sdcard/Android/data/com.installed.app/files/GPUCache"
+    env.phone.file(cache + "/data_0", size=9_000)
+    env.prepare_analysis()
+    item = env.require_item("app_cache")
+    assert item["primary_path"] == cache
+
+    env.plan_now(env.write_review())
+    env.select_ids(item["id"])
+    env.execute_ok()
+
+    assert not env.phone.exists(cache + "/data_0")
+    assert env.phone.exists("/sdcard/Android/data/com.installed.app/files")

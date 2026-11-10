@@ -150,6 +150,30 @@ class Doctor:
             roots.insert(0, HARMONY_PHOTO_ROOT)
         return list(dict.fromkeys(roots))
 
+    def _sample_app_data_dirs(self, root: str, *, limit: int = 6) -> dict[str, Any]:
+        """Probe a few children of /sdcard/Android/data.
+
+        A ROM can make the parent listable while individual package folders
+        stay locked.  Without this sample, doctor would report
+        "Android/data 可读" and the user would never learn that whole apps were
+        skipped.  Read-only: listdir + access probes only.
+        """
+        result: dict[str, Any] = {"probed": 0, "unreadable": []}
+        try:
+            entries = [entry for entry in self.transport.listdir(root) if entry.kind == "dir"]
+        except TransportError:
+            return result
+        for entry in sorted(entries, key=lambda item: item.name)[:limit]:
+            result["probed"] += 1
+            try:
+                probe = self.transport.access(entry.path)
+            except TransportError:
+                result["unreadable"].append(entry.path)
+                continue
+            if not probe.readable or not probe.listable:
+                result["unreadable"].append(entry.path)
+        return result
+
     def run(self) -> dict[str, Any]:
         self._ensure_connected()
         privilege = "shell"
@@ -254,6 +278,9 @@ class Doctor:
             can_quarantine = can_write_sdcard or (privilege in {"root", "su"} and internal)
             pm_ok = bool(packages.available and commands.get("pm", True))
             hash_ok = bool(commands.get("sha256sum") or commands.get("md5sum"))
+            app_data_sample = self._sample_app_data_dirs("/sdcard/Android/data") if android_data else {
+                "probed": 0, "unreadable": []
+            }
 
             if privilege in {"root", "su"}:
                 tier = "full"
@@ -271,6 +298,13 @@ class Doctor:
                 limitations.append(
                     "无法读取 /sdcard/Android/data：该目录在当前权限级别下受限制。"
                     "将无法发现应用外部缓存与卸载残留；请使用 Root/Shizuku 或手动授权。"
+                )
+            elif app_data_sample["unreadable"]:
+                sample = app_data_sample["unreadable"]
+                limitations.append(
+                    f"Android/data 抽样 {app_data_sample['probed']} 个应用目录，其中 {len(sample)} 个不可读"
+                    f"（如 {', '.join(sample[:3])}）：扫描会少算这些应用的数据，覆盖率会标为 partial，"
+                    "报告不会显示为完整。"
                 )
             if not android_obb:
                 limitations.append("无法读取 /sdcard/Android/obb：OBB 残留无法发现。")
@@ -318,6 +352,8 @@ class Doctor:
                 "sdcard_write": can_write_sdcard,
                 "android_data_read": android_data,
                 "android_obb_read": android_obb,
+                "android_data_partial_read": bool(app_data_sample["unreadable"]),
+                "android_data_sample": app_data_sample,
                 "internal_data_read": internal,
                 "package_manager": pm_ok,
                 "android_user": android_user,

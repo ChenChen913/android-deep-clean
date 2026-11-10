@@ -659,6 +659,7 @@ class Analyzer:
             tuple(extensions),
         )
         groups: dict[str, list[CandidateFile]] = {}
+        group_rules: dict[str, list[str]] = {}
         for row in rows:
             rule = special_cache_rule(row["path"], is_dir=False)
             if not rule:
@@ -667,6 +668,9 @@ class Analyzer:
             if not guard.get("allowed"):
                 continue
             groups.setdefault(row["parent"], []).append(self._file_from_row(row))
+            group_rules.setdefault(row["parent"], [])
+            if rule["id"] not in group_rules[row["parent"]]:
+                group_rules[row["parent"]].append(rule["id"])
         for parent, files in sorted(groups.items()):
             if self._limit():
                 return
@@ -674,11 +678,12 @@ class Analyzer:
             category = "chat_cache" if (is_chat_path(parent) or kind == "chat") else (
                 "browser_cache" if kind == "browser" else "app_cache"
             )
+            rule_ids = ", ".join(group_rules.get(parent) or [])
             self._group_files_candidate(
                 category=category, parent=parent, files=files, risk="CAUTION",
                 title=f"待确认缓存文件：{display_path(parent)}",
                 evidence=self._base_evidence(parent, files) + [
-                    {"code": "special_cache", "text": "扩展名匹配特殊缓存规则；仅在应用数据/腾讯目录内识别"},
+                    {"code": "special_cache", "text": f"规则 {rule_ids}：扩展名匹配特殊缓存；仅在应用数据/腾讯目录内识别"},
                     {"code": "special_cache_rule", "text": "未确认用途前不纳入 SAFE"},
                 ],
                 reasons=["扩展名呈缓存特征，但来源需确认；清理后可能需要应用重新生成。"],

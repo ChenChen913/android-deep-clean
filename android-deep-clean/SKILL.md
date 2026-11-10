@@ -120,7 +120,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial <序
 
 默认扫描 /sdcard；Root 下会自动追加 /data/data/*/cache。可选参数：--roots、--max-depth、--max-files、--no-internal、--no-media、--no-app-storage。大数据量时可接受截断，但必须在报告里说明。
 
-扫描会同时生成目录统计与覆盖率：每个目录的直接/子树大小、文件数、最新 mtime，逻辑大小与按 `(dev, inode)` 去重后的大小，以及每个根目录的扫描状态和跳过路径。默认还会更新主机侧目录档案 `.adc-state/history/archive.db`；可用 `--no-archive` 跳过。
+扫描会同时生成目录统计与覆盖率：每个目录的直接/子树大小、文件数、最新 mtime，逻辑大小与按 `(dev, inode)` 去重后的大小，以及每个根目录的扫描状态和跳过路径。默认还会更新主机侧目录档案 `.adc-state/history/archive.db`；可用 `--no-archive` 跳过。v1.10.1 起，`find` 的权限错误会写入跳过路径并把覆盖率降为 `partial`；向用户汇报时必须说明少了哪些路径，不能把 `partial` 说成完整。
 
 v1.4.0 起，scan 默认尝试只读查询 Android MediaStore（images/video/audio/downloads），结果写到主机侧 `scan/aux/sources.json` 与 `scan/aux/media-index.jsonl`。该索引只用于与文件扫描交叉验证；`--no-media` 可关闭。HarmonyOS NEXT 不使用 Android MediaStore，状态为 `unsupported`；ADB shell/Shizuku 不需要 Root，Termux local 通常无媒体权限并会降级。
 

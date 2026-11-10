@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.10.1 — 修复特殊缓存守卫不一致与扫描覆盖漏报
+
+### Fixed
+- **issue #1：`files/` 下的隐藏缓存不再被守卫吞掉。** `guard_path` 的 `Android/data` 分支只检查包目录下的第一层名字，`<pkg>/files/GPUCache`、`files/app_webview/Default/Code Cache`、`files/Service Worker`、`files/.qcl` 全部被判 DANGEROUS，v1.10.0 的「隐藏/特殊缓存识别」在真机上因此几乎零命中。
+  - 新增 `special_cache_scope()`：命中 `special_cache_rule` 的目录及其内部文件继承同一结论，执行器逐文件复检时不会再把清单里的文件拒掉。
+  - 风险下限固定为 CAUTION，不会进入 SAFE；只对 `app_cache` / `browser_cache` / `chat_cache` 生效，`residue` / `empty_dirs` 等类别不放宽。
+  - `PROTECTED_DIR_NAMES`（`files`、`app_webview`、`databases`……）改为只检查缓存根以下的相对路径：缓存本身可用，`files/databases`、`files/Downloads`、`files/config.xml` 仍然拒绝。
+  - 文件型 `.qcl` 候选的证据补上规则 id（`tencent-qcl` / `generic-hidden-cache`），与目录型候选一致。
+- **issue #2：`find` / `stat` 的 stderr 不再丢弃。** 以前 `2>/dev/null` 把 `Permission denied` 全部吞掉，`skip_sink` 只能收到超时和 `max_files`，覆盖率继续显示 `good`。
+  - `iter_tree()` 用独立管道 + 线程实时读取 stderr（不与 stdout 混合，避免破坏 `-print0` 流），把权限失败解析成 skipped 记录：路径、原因、「权限不足」都写入快照。
+  - 明细最多保留 200 条，超出后追加一条汇总（「另有 N 个路径权限不足」），不会因为一个被锁目录刷爆报告。
+  - `scan` 覆盖率因此降级为 `partial`，`scan-summary.md` / `report-before.md` / `report-before.html` 写明跳过的路径与原因，不再显示为完整；HTML 覆盖率状态改为中文标签（完整 / 部分覆盖 / 可疑），不再直接输出英文枚举值。
+  - `doctor` 新增 `android_data_sample` 抽样（默认最多 6 个应用目录）与 `android_data_partial_read`：父目录可列举、子目录被 ROM 锁住时会写出限制说明。
+  - 只有 `Permission denied` / `Operation not permitted` 计入 partial；扫描期间的 `No such file or directory` 不降级，避免活跃设备上的正常竞态造成误报。
+  - 同时兼容 toybox 与 GNU 两种报错格式（`find: '/x': Permission denied`、`stat: cannot statx ‘/x’: Permission denied`），覆盖 ADB/Shizuku 与 proot Ubuntu 的 `local` 通路。
+
+### Tests
+- 新增 21 条回归用例：特殊缓存守卫矩阵（含 `files/databases`、`files/Downloads`、DCIM 反例）、候选生成、`tencent-qcl` 规则 id、端到端隔离执行、stderr 解析（toybox/GNU 格式、去重、上限）、`_find_script` 不再重定向、覆盖率 partial、doctor 子目录抽样、HTML 覆盖率中文标签。
+
+### Notes
+- 全量 302 passed, 2 skipped（304 collected）。
+- 未重新做真机验收：issue 里的真机路径（HONOR HLK-AL00 / proot local）需要在 v1.10.1 上复测；复测要点见 issue 回复。
+
 ## v1.10.0 — 扫描覆盖、应用存储、MediaStore 诊断与移动端报告
 
 ### Added

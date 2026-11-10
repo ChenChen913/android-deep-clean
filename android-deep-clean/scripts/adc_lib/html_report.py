@@ -105,7 +105,7 @@ def render_analysis_html(analysis: dict[str, Any], config: dict[str, Any] | None
         ("分析 ID", analysis.get("analysis_id") or "-"),
         ("生成时间", analysis.get("generated_at") or "-"),
         ("扫描文件", f"{_num(stats.get('files'))} 个 / {human_bytes(_num(stats.get('bytes')))}"),
-        ("覆盖率", coverage.get("status") or "-"),
+        ("覆盖率", _coverage_label(coverage.get("status"))),
     ):
         parts.append(
             f'<div class="card"><div class="k">{_e(label)}</div><div class="v">{_e(value)}</div></div>'
@@ -204,6 +204,17 @@ def _space_section(story: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _coverage_label(value: Any) -> str:
+    return {
+        "good": "完整",
+        "partial": "部分覆盖",
+        "suspect": "可疑（未扫到文件）",
+        "scanned": "已扫描",
+        "skipped": "未扫描",
+        "unknown": "未知",
+    }.get(str(value or ""), str(value or "-"))
+
+
 def _coverage_section(coverage: dict[str, Any]) -> str:
     if not coverage:
         return ""
@@ -220,7 +231,7 @@ def _coverage_section(coverage: dict[str, Any]) -> str:
         for item in roots:
             parts.append(
                 f'<tr><td><code>{_e(item.get("path"))}</code></td>'
-                f'<td>{_e(item.get("state"))}</td><td>{_e(item.get("reason") or "-")}</td></tr>'
+                f'<td>{_e(_coverage_label(item.get("state")))}</td><td>{_e(item.get("reason") or "-")}</td></tr>'
             )
         parts.append("</tbody></table></div>")
     largest = coverage.get("largest_dirs") or []

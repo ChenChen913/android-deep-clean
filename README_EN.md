@@ -595,7 +595,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-09 / v1.10.0: 281 passed, 2 skipped (283 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
+Measured on 2026-11-10 / v1.10.1: 302 passed, 2 skipped (304 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -645,6 +645,7 @@ A: Every device command must pass `--serial`. Plans, selections and executions a
 - The MediaStore index depends on `content query` and on shell/OEM behavior. It passed read-only validation on one HarmonyOS 3.0 compat / Android 10 device; the `downloads` collection was unavailable there. Other OEMs and Android versions still need validation. Index delays, multi-user profiles, hidden directories and some SD volumes can cause differences. Zero-row results are cross-checked against the filesystem scan and only become `zero_mismatch` when the same-kind file count reaches the threshold.
 - App-level storage: base APKs need no root; split-APK discovery has an app budget; internal data/cache are only sampled with read-only `du` under root/su. Plain shells are explicitly marked unavailable. `dumpsys diskstats` is not used because it writes a system cache; no StorageStatsManager helper APK is included.
 - Hidden/special caches are matched only by name/extension plus an allowed root, and every such candidate is CAUTION/review-required. Vendor top-level directories may contain user data and are not auto-classified as cache.
+- Scan coverage follows `find` stderr: a locked subdirectory downgrades coverage to `partial` and is listed by path. `doctor` samples at most 6 `Android/data` app folders, so unsampled apps can still be under-counted; the report never claims completeness for them.
 - Quarantine path checks use `realpath` to narrow the TOCTOU window, but adb shell cannot provide `openat/O_NOFOLLOW` atomic guarantees; an unresolvable real path is always refused.
 - Permanent delete (purge) has only been exercised on self-created test files; real user data is not accepted yet.
 - HarmonyOS NEXT handles public directories and the media library only; app-private caches cannot be scanned per file, it does not use Android MediaStore, and `bm clean` is not wired into the executor.

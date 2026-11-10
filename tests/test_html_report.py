@@ -141,6 +141,27 @@ def test_html_escapes_untrusted_paths():
     assert "onerror=alert(1)" not in html or "&lt;img" in html
 
 
+def test_html_shows_partial_coverage_in_chinese():
+    """issue #2: a locked subdirectory must not look like a complete scan."""
+    analysis = _analysis()
+    analysis["summary"]["coverage"] = {
+        "status": "partial",
+        "logical_bytes": 1000,
+        "unique_bytes": 1000,
+        "dir_count": 3,
+        "reasons": ["扫描过程中跳过 1 个路径（权限不足/无法读取），结果不完整"],
+        "skipped_paths": ["/sdcard/Android/data/com.locked.app"],
+        "root_status": [{"path": "/sdcard", "state": "scanned", "reason": ""}],
+    }
+
+    html = render_analysis_html(analysis)
+
+    assert "部分覆盖" in html
+    assert ">partial<" not in html
+    assert "覆盖限制" in html
+    assert "/sdcard/Android/data/com.locked.app" in html
+
+
 def test_html_without_optional_sections_does_not_crash():
     analysis = _analysis()
     analysis["summary"]["media_index"] = {}

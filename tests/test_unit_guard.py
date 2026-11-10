@@ -13,6 +13,7 @@ from adc_lib.rules import (
     is_system_path,
     is_user_media_path,
     package_from_path,
+    special_cache_rule,
 )
 
 PACKAGES = PackageIndex(
@@ -200,3 +201,66 @@ def test_package_and_path_helpers():
     assert is_system_path("/system/bin/sh") is True
     assert is_system_path("/sdcard/DCIM/a.jpg") is False
     assert is_protected_filename(".nomedia.tmp") is True
+
+
+# ---------------------------------------------------------------- issue #1
+# Hidden/special caches live under files/app_webview/... on real devices, but
+# the guard used to look only at the first directory below the package name and
+# therefore rejected every one of them (issue #1).
+
+TENCENT = PackageIndex(installed={"com.tencent.mobileqq"}, uninstalled=set(), system={"android"})
+
+
+def test_special_cache_under_files_is_allowed_but_stays_caution():
+    for path, kind in (
+        ("/sdcard/Android/data/com.installed.app/GPUCache", "dir"),
+        ("/sdcard/Android/data/com.installed.app/files/GPUCache", "dir"),
+        ("/sdcard/Android/data/com.installed.app/files/app_webview/Default/Code Cache", "dir"),
+        ("/sdcard/Android/data/com.installed.app/files/app_webview/Default/Service Worker", "dir"),
+        ("/sdcard/Android/data/com.installed.app/files/app_webview/Default/CacheStorage", "dir"),
+        ("/sdcard/Android/data/com.installed.app/files/GPUCache/data_0", "file"),
+    ):
+        result = evaluate(path, "app_cache", kind=kind)
+        assert result["allowed"] is True, path
+        assert result["hard_block"] is False, path
+        assert result["risk_floor"] == "CAUTION", path
+
+
+def test_special_cache_does_not_open_non_cache_files():
+    for path in (
+        "/sdcard/Android/data/com.installed.app/files/databases",
+        "/sdcard/Android/data/com.installed.app/files/databases/user.db",
+        "/sdcard/Android/data/com.installed.app/files/Downloads",
+        "/sdcard/Android/data/com.installed.app/files/config.xml",
+        "/sdcard/Android/data/com.installed.app/databases/shared_prefs",
+    ):
+        result = evaluate(path, "app_cache")
+        assert result["allowed"] is False, path
+        assert result["hard_block"] is True, path
+
+
+def test_special_cache_names_outside_app_data_are_not_caches():
+    result = evaluate("/sdcard/DCIM/Camera/Code Cache", "app_cache", kind="dir")
+    assert result["allowed"] is False
+    result = evaluate("/sdcard/Documents/GPUCache", "app_cache", kind="dir")
+    assert result["allowed"] is False
+
+
+def test_special_cache_rule_is_not_a_generic_allowlist():
+    # Only cache categories may benefit; a hidden name must not unlock
+    # empty_dirs or residue handling by itself.
+    result = guard_path(
+        "/sdcard/Android/data/com.installed.app/files/GPUCache", "empty_dirs",
+        kind="dir", packages=PACKAGES,
+    )
+    assert result["allowed"] is False
+
+
+def test_qcl_under_files_keeps_tencent_rule():
+    path = "/sdcard/Android/data/com.tencent.mobileqq/files/.qcl"
+    assert special_cache_rule(path, is_dir=True)["id"] == "tencent-qcl"
+    result = guard_path(path, "app_cache", kind="dir", packages=TENCENT)
+    assert result["allowed"] is True
+    assert result["risk_floor"] == "CAUTION"
+    # A .qcl outside the Tencent roots stays unrecognised.
+    assert special_cache_rule("/sdcard/Android/data/com.installed.app/files/.qcl", is_dir=True)["id"] == "generic-hidden-cache"

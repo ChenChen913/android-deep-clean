@@ -100,3 +100,18 @@ def test_doctor_writes_json_and_markdown_reports(env):
     assert "权限级别" in markdown
     assert "只读" in markdown
     assert "/sdcard" in markdown
+
+
+def test_doctor_samples_android_data_subdirectories(env):
+    """issue #2: the parent can be listable while single app folders stay locked."""
+    env.phone.file("/sdcard/Android/data/com.installed.app/cache/a.bin", size=100)
+    env.phone.file("/sdcard/Android/data/com.locked.app/cache/b.bin", size=100)
+    env.set_caps(privilege="shell", inaccessible=["/sdcard/Android/data/com.locked.app"])
+
+    report = env.ok("doctor").json()
+    caps = report["capabilities"]
+
+    assert caps["android_data_read"] is True
+    assert caps["android_data_partial_read"] is True
+    assert caps["android_data_sample"]["unreadable"] == ["/sdcard/Android/data/com.locked.app"]
+    assert any("不可读" in item for item in report["limitations"])

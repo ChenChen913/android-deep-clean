@@ -261,6 +261,8 @@ SPECIAL_CACHE_RULES = (
         "reason": "聊天应用隐藏缓存目录；不包含聊天记录与接收文件",
     },
 )
+SPECIAL_CACHE_CATEGORIES = frozenset({"app_cache", "browser_cache", "chat_cache"})
+
 THUMB_DIR_NAMES = {".thumbnails", "thumbnails", "thumbs", ".thumb", "thumb"}
 TRASH_DIR_NAMES = {".trash", "trash", ".recycle", "recycle", ".recyclebin", "recycle_bin", "$recycle.bin"}
 
@@ -420,6 +422,44 @@ def special_cache_rule(path: str, *, is_dir: bool = False) -> dict[str, Any] | N
     return None
 
 
+def special_cache_scope(path: str, *, kind: str = "dir") -> tuple[str, dict[str, Any] | None]:
+    """Return ``(cache_root, rule)`` when path is a special cache or inside one.
+
+    ``special_cache_rule`` only looks at the basename, which is right for the
+    analyzer but wrong for the guard: a cache's children (``GPUCache/data_0``)
+    must inherit the verdict of the cache root, otherwise the executor would
+    re-reject every file it was told to clean.  The walk stops as soon as the
+    path leaves the app-external-data / chat roots.
+    """
+    try:
+        normalized = normalize_device_path(path)
+    except Exception:  # noqa: BLE001 - fail closed, callers treat "" as no match
+        return "", None
+    if not (is_under(normalized, "/sdcard/Android/data") or is_chat_path(normalized)):
+        return "", None
+    if kind != "dir":
+        rule = special_cache_rule(normalized, is_dir=False)
+        if rule:
+            return normalized, rule
+        candidate = posixpath.dirname(normalized)
+    else:
+        candidate = normalized
+    while candidate and candidate != "/":
+        if not (is_under(candidate, "/sdcard/Android/data") or is_chat_path(candidate)):
+            break
+        # Fast reject: every rule name lives in SPECIAL_CACHE_DIR_NAMES, so a
+        # plain set lookup avoids re-running the whole rule table per ancestor.
+        if posixpath.basename(candidate).lower() in SPECIAL_CACHE_DIR_NAMES:
+            rule = special_cache_rule(candidate, is_dir=True)
+            if rule:
+                return candidate, rule
+        parent = posixpath.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+    return "", None
+
+
 def is_thumb_path(path: str) -> bool:
     return has_component(path, THUMB_DIR_NAMES)
 
@@ -459,7 +499,13 @@ def _hard_block(path: str) -> tuple[bool, str]:
     return False, ""
 
 
-def _guard_android_tree(path: str, category: str, packages: PackageIndex | None) -> tuple[bool, str, str]:
+def _guard_android_tree(
+    path: str,
+    category: str,
+    packages: PackageIndex | None,
+    *,
+    special_rule: dict[str, Any] | None = None,
+) -> tuple[bool, str, str]:
     """Return (allowed, reason, risk_floor) for /sdcard/Android/** paths."""
     package = package_from_path(path)
     kind = app_dir_kind(path)
@@ -475,14 +521,19 @@ def _guard_android_tree(path: str, category: str, packages: PackageIndex | None)
     lower_sub = [p.lower() for p in sub]
 
     if kind == "data":
+        # A special-cache rule hit (e.g. files/app_webview/Default/Code Cache)
+        # is itself evidence enough: the rule requires both a cache-shaped name
+        # and an allowed root.  Without this, every real WebView cache nested
+        # under files/ was dropped even though special_cache_rule matched it.
+        special = bool(special_rule) and category in SPECIAL_CACHE_CATEGORIES
         cache_ok = bool(lower_sub) and (
             lower_sub[0] in CACHE_DIR_NAMES or lower_sub[0] in SPECIAL_CACHE_DIR_NAMES
         )
         if category == "residue" and installed is False:
             return True, "", "CAUTION"
-        if category in {"app_cache", "browser_cache", "chat_cache", "thumbnails", "temp_logs", "trash"} and cache_ok:
+        if category in {"app_cache", "browser_cache", "chat_cache", "thumbnails", "temp_logs", "trash"} and (cache_ok or special):
             floor = "SAFE" if category != "chat_cache" else "CAUTION"
-            if lower_sub[0] in SPECIAL_CACHE_DIR_NAMES:
+            if special or (lower_sub and lower_sub[0] in SPECIAL_CACHE_DIR_NAMES):
                 floor = "CAUTION"
             return True, "", floor
         if installed is False and cache_ok:
@@ -579,6 +630,13 @@ def guard_path(
     if normalize_platform(platform) == HARMONY_NEXT:
         return _guard_harmony_next(path, category, kind=kind, config=config)
 
+    # A special-cache path (or anything inside one) keeps its own verdict:
+    # the rule requires both a cache-shaped name and an allowed root, so the
+    # generic "files/app_webview are protected" check must not veto it again.
+    special_root, special_rule = ("", None)
+    if category in SPECIAL_CACHE_CATEGORIES:
+        special_root, special_rule = special_cache_scope(path, kind=kind)
+
     hard, hard_reason = _hard_block(path)
     if hard:
         # internal cache paths are the only exception to the generic /data/data block.
@@ -596,7 +654,7 @@ def guard_path(
             return {"allowed": False, "hard_block": True, "reason": reason, "risk_floor": floor}
         risk_floor = floor
     elif is_under(path, "/sdcard/Android"):
-        allowed, reason, floor = _guard_android_tree(path, category, packages)
+        allowed, reason, floor = _guard_android_tree(path, category, packages, special_rule=special_rule)
         if not allowed:
             return {"allowed": False, "hard_block": True, "reason": reason, "risk_floor": floor}
         risk_floor = floor
@@ -609,7 +667,14 @@ def guard_path(
     name = posixpath.basename(path)
     if is_protected_filename(name):
         return {"allowed": False, "hard_block": True, "reason": "数据库/密钥/.nomedia 等敏感文件受保护", "risk_floor": "DANGEROUS"}
-    if any(part.lower() in PROTECTED_DIR_NAMES for part in path.split("/") if part):
+    # Outside a special cache the whole path must be clean.  Inside one, only
+    # the part below the cache root is re-checked, so a cache living under
+    # files/app_webview/ stays eligible while files/databases stays blocked.
+    protected_scope = [part for part in path.split("/") if part]
+    if special_root and (path == special_root or is_under(path, special_root)):
+        relative_to_cache = path[len(special_root):].strip("/")
+        protected_scope = [part for part in relative_to_cache.split("/") if part]
+    if any(part.lower() in PROTECTED_DIR_NAMES for part in protected_scope):
         return {"allowed": False, "hard_block": True, "reason": "应用数据库/配置/shared_prefs 目录受保护", "risk_floor": "DANGEROUS"}
 
     # user personal directories
