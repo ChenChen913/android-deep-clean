@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-最后一条命令应输出 `android-deep-clean 1.10.3`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
+最后一条命令应输出 `android-deep-clean 1.11.0`。安装脚本会先备份旧目录，复制后校验 `SKILL.md`、`scripts/adc.py`、`platform.py`，失败自动回滚。
 
 macOS / Linux 安装到通用 skills 目录：
 
@@ -485,9 +485,11 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 
 `analyze` 会额外生成 `analysis/report-before.html`，用浏览器直接打开即可，不需要联网、不加载任何外部脚本或字体：
 
-- 空间去向速览：设备已用、文件扫描、基础 APK、未解释差额，用比例条展示，并明确标注各项不能相加。
-- 扫描覆盖、媒体索引核对、应用级存储、跨轮目录变化：与 Markdown 报告同一份数据。
-- 清理候选可折叠展开，每条包含“这是什么 / 为什么列出 / 删除影响”、路径示例、证据与保留建议。
+- **五种可信状态**贯穿全文：`已知` / `部分` / `未知` / `无法确认` / `失败` 各有独立图标与配色，顶部固定图例。读不到的数字标“未知”，不会看起来像 0。
+- **首屏给结论**：直接说明“已用 79.59 GB 中，74.4% 无法解释”，并重申只读、尚未删除任何文件。
+- **空间去向**：分段比例带（文件扫描 / 基础 APK / 无法解释用斜纹）+ 各来源口径卡 + “为什么不能相加”的逐条解释。
+- **扫描覆盖、媒体索引核对、应用级存储、跨轮目录变化**：与 Markdown 报告同一份数据；媒体索引用索引数与扫描数的成对条形，应用存储用横向比例排行。
+- **清理候选**：分类分布 + 三张“10 秒聚焦”卡（体积最大 / 风险最高 / 需复核）+ 按体积降序的折叠明细，默认只展开被聚焦的几组。
 - 受保护内容、限制与安全边界单独列出，页脚再次声明“只读分析、尚未删除任何文件”。
 
 执行完成后还会生成 `execution/report-cleanup.html`，并在 `verify`、`quarantine purge`、`restore` 后自动更新，把整个清理过程串成一份档案：
@@ -497,7 +499,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 - 验证统计与异常、隔离区占用、purge / restore 结果、可用空间记录。
 - 剩余问题、后续命令与安全说明；未验证的步骤不会显示为通过。
 
-两份报告都在主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 400 组候选，完整清单仍以 `analysis.db` 为准。报告使用纯白背景与黑白灰排版，单一蓝色作为强调色，目录为克制的吸顶玻璃胶囊；深色模式为纯黑背景。报告包含设备序列号与文件路径，分享前请自行脱敏。HTML 不改变候选、风险或可选择性，也不构成删除授权。
+两份报告都在主机侧渲染，不访问设备；所有路径与证据都经过 HTML 转义；单次最多展示 60 组候选，其余在 `analysis.db` 与 `analysis.json` 中，字段一致。版式随屏幕自适应：560px 以下表格转成“标签在上、值在下”的卡片，竖着读完即可，不需要横向拖动；深色模式跟随 `prefers-color-scheme`。报告包含设备序列号与文件路径，分享前请自行脱敏。HTML 不改变候选、风险或可选择性，也不构成删除授权。上一版渲染器保留在 `html_report_legacy.py`，回退只需覆盖回 `html_report.py`。
 
 ### 命令总表
 
@@ -634,7 +636,7 @@ python "$Skill\scripts\adc.py" scan --state $State --transport adb --serial $Ser
 python -m pytest tests -q
 ```
 
-2026-11-10 / v1.10.3 实测：325 passed, 2 skipped（327 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
+2026-11-10 / v1.11.0 实测：327 passed, 2 skipped（329 collected）。跳过项是当前 Windows 环境无法创建符号链接，Linux CI 会实际执行。
 
 CI 矩阵：`ubuntu-22.04`、`windows-latest` × Python `3.9`、`3.13`，共 4 个作业，工作流见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 

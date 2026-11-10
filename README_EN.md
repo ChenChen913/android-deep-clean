@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\android-deep-clean\scripts\install_sk
 python "$env:USERPROFILE\.agents\skills\android-deep-clean\scripts\adc.py" --version
 ```
 
-The last command should print `android-deep-clean 1.10.3`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
+The last command should print `android-deep-clean 1.11.0`. The installer backs up an existing directory, copies the new one, verifies `SKILL.md`, `scripts/adc.py` and `platform.py`, and rolls back on failure.
 
 macOS / Linux installation into a generic skills directory:
 
@@ -455,9 +455,11 @@ After a successful `execute`, the token hash is recorded in `execution/consumed-
 
 `analyze` also writes `analysis/report-before.html`, which opens directly in a browser with no network access, scripts, fonts or other external assets:
 
-- Space story: device used, file scan, base APKs and the unexplained gap on a proportional bar, with an explicit "do not add these together" note.
-- Scan coverage, media-index crosscheck, app-level storage and cross-round directory changes use the same data as the Markdown report.
-- Candidates are collapsible; each shows what it is, why it was listed, what deleting it changes, sample paths, evidence and keep suggestions.
+- **Five trust states** run through the whole report: `known` / `partial` / `unknown` / `unconfirmed` / `failed`, each with its own icon and colour, plus a fixed legend. Unreadable numbers say "unknown" and never look like zero.
+- **The first screen states the conclusion**: "of 79.59 GB used, 74.4% is unexplained", together with the reminder that nothing has been deleted.
+- **Space story**: a segmented proportional band (file scan / base APKs / striped unexplained gap), per-source methodology cards and a "do not add these together" section.
+- **Scan coverage, media crosscheck, app storage, directory changes** use the same data as the Markdown report; media uses paired index-vs-scan bars, app storage uses a horizontal ranking.
+- **Candidates**: category distribution, three "10-second focus" cards (largest / highest risk / needs review) and a size-descending collapsible list that opens only the focused rows.
 - Protected items, limitations and the safety boundary are listed separately, and the footer repeats that nothing has been deleted.
 
 After execution, `execution/report-cleanup.html` is written and refreshed by `verify`, `quarantine purge` and `restore`. It turns the whole run into one archive:
@@ -467,7 +469,7 @@ After execution, `execution/report-cleanup.html` is written and refreshed by `ve
 - Verification stats and anomalies, quarantine occupancy, purge/restore results and free-space records.
 - Remaining issues, suggested commands and safety notes; unverified steps are never shown as passed.
 
-Both reports are rendered on the host, never touch the device, HTML-escape every path and evidence string, and show at most 400 candidates per run (the full manifest stays in `analysis.db`). They use a pure white background with black/gray typography and a single blue accent, plus a restrained sticky glass pill for navigation; dark mode uses pure black. They contain the device serial and file paths; redact before sharing. They do not change candidates, risks or selectability, and they are not deletion authorization.
+Both reports are rendered on the host, never touch the device, HTML-escape every path and evidence string, and show at most 60 candidates per run (the rest stay in `analysis.db` and `analysis.json` with identical fields). The layout adapts to the screen: below 560px every table becomes a labelled card list that reads top-to-bottom instead of scrolling sideways; dark mode follows `prefers-color-scheme`. They contain the device serial and file paths; redact before sharing. They do not change candidates, risks or selectability, and they are not deletion authorization. The previous renderer is kept in `html_report_legacy.py`; copying it back over `html_report.py` restores the old layout.
 
 ### Command reference
 
@@ -599,7 +601,7 @@ Run the full suite (no phone, no network):
 python -m pytest tests -q
 ```
 
-Measured on 2026-11-10 / v1.10.3: 325 passed, 2 skipped (327 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
+Measured on 2026-11-10 / v1.11.0: 327 passed, 2 skipped (329 collected). The skipped cases need symlink creation, which this Windows environment cannot do; Linux CI runs them.
 
 CI matrix: `ubuntu-22.04`, `windows-latest` × Python `3.9`, `3.13` — 4 jobs. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

@@ -148,3 +148,15 @@ device JSON 字段：`serial, sdk, release, manufacturer, model, build_type, abi
 - 应用存储：基础 APK 优先 `base.apk`，厂商 bundle 按 `pm path` 顺序取第一个非 `split_*` 条目；基础 APK 不可读时 `apk_base_bytes=null`，不使用 split 顶替。内部 `du` 的退出码与错误参与判定：权限/IO 失败标 `partial`，`cache`/`code_cache` 不存在属正常情况。
 - 内部 cache：目录不存在或存在但为空才是 `0`；读不到时 `internal_cache_bytes` / `internal_code_cache_bytes` 写 NULL，汇总新增 `internal_cache_unknown`，manifest 新增 `internal.cache_unknown`，`internal.cache_bytes` 没有已知值时为 `null`。
 - MediaStore：集合状态新增 `zero_unconfirmed`（0 条且可核对同类文件为 1 到阈值−1）；`crosscheck` 新增 `hidden_excluded`；`empty` 的显示文案为「0 条（未发现可参与核对的同类文件）」。
+
+## v1.11.0 报告呈现契约补充
+
+本节只涉及 HTML 的版式与呈现，**命令、参数、JSON 字段与文件名均未变化**。
+
+- 报告文件路径不变：`analysis/report-before.html` 与 `execution/report-cleanup.html`；单文件、无外部资源、无 JS 依赖。
+- 新增「可信状态」呈现层：`已知` / `部分` / `未知` / `无法确认` / `失败` 各有独立的图标、配色与图例。数值缺失时显示「未知」，不写 `0`；`partial` 的数值在文案上标注为下限。
+- 候选呈现：按 `total_bytes` 降序，渲染上限 60 组（原 400），每组为 `<details>`，默认只展开「体积最大 / 风险最高 / 需复核」三组；超出部分提示到 `analysis.db` 与 `analysis.json` 查看，字段一致。
+- 响应式：断点为 760px 与 560px。560px 以下 `table` 通过 `td[data-label]` 转为堆叠卡片，不再依赖横向滚动。深色模式由 `prefers-color-scheme: dark` 驱动。
+- 纹理与图形全部为内联 CSS（渐变、`repeating-linear-gradient` 斜纹），没有图片、字体或图表库依赖。
+- 旧版渲染器保留在 `adc_lib/html_report_legacy.py`，不被任何模块引用；需要回退时覆盖回 `html_report.py` 即可。
+

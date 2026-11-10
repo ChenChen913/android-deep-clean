@@ -25,7 +25,7 @@
 - 应用存储：基础/split APK、内部 data（root/su 时）、外部 data/media/obb，以及 permission_denied / partial / unavailable 状态。
 - 隔离区：realpath 基线、父目录校验、哈希校验状态（通过 / 仅大小 / 未完成）。
 
-HTML 报告为单文件离线页面，640px / 340px 断点；表格在 `.scroll` 内横向滚动，目录为单行横向滚动。已在 Chromium 320/360/390/430/1280 视口检查，无页面级横向溢出；真实 iOS Safari / 微信内置浏览器仍需单独验收。
+HTML 报告为单文件离线页面，760px / 560px 两档断点。窄屏下表格不再横向滚动，而是借助每个单元格的 `data-label` 变成“标签在上、值在下”的卡片；`overflow-x:auto` 仅保留给导航与少量代码块。深色模式通过 `prefers-color-scheme: dark` 全量覆盖，两套语义色都重新调过对比度。已在 Chromium 390/560/760/1360 视口与深色模式下检查，无页面级横向溢出；真实 iOS Safari / 微信内置浏览器仍需单独验收。
 
 ## 3. 状态文件结构
 

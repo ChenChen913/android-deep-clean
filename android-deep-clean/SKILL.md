@@ -145,7 +145,7 @@ python "$Skill\scripts\adc.py" analyze --state $State --transport adb --serial <
 
 生成：
 - report-before.md：人类可读的清理前报告（分类、数量、大小、路径示例、理由、风险、建议），开头是「空间去向速览」，并包含「存储空间与扫描覆盖」「媒体索引核对」「应用级存储（部分口径）」「跨轮目录变化」区块。
-- report-before.html：同一份数据的单文件可视化报告，浏览器离线打开；候选可折叠，含空间比例条、证据与安全边界，不加载任何外部资源。
+- report-before.html：同一份数据的单文件可视化报告，浏览器离线打开，不加载任何外部资源。首屏直接给结论（已用空间中有多少无法解释）；已知/部分/未知/无法确认/失败五种状态各有独立标记；空间用分段比例带，媒体用索引与扫描的成对条形；候选按体积降序折叠，只展开“体积最大/风险最高/需复核”三组；560px 以下表格转成带标签的卡片，深色模式跟随系统。
 - analysis-summary.json：AI 优先读这个（比完整 analysis.json 小），包含 `storage`、`coverage`、`media_index`、`app_storage`、`space_story`、`directory_changes`。
 - review-template.json：需要复核的候选模板。
 - 每个候选带 `explain`：这是什么、为什么列出、删除影响；它只提高可读性，不改变风险等级。

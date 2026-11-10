@@ -69,7 +69,7 @@
 
 ## 5. 当前结论
 
-- 代码与本地 Mock：通过（v1.10.3，325 passed / 2 skipped；327 collected），CI 四个作业通过。
+- 代码与本地 Mock：通过（v1.11.0，327 passed / 2 skipped；329 collected），CI 四个作业通过。
 - 真实设备只读链路：HONOR HLK-AL00（HarmonyOS 3.0 兼容版 / Android 10）已通过 doctor、scan、analyze、inspect；local 与 USB+ADB 两条通路均验证。v1.10.2 复测：34,841 条目 / 28,174 文件 / 11.35 GiB，`coverage=good`；MediaStore 4,963 条索引；293/293 个应用识别基础 APK。
 - 真实设备清理/恢复：隔离与恢复机制已在 1 台设备用自建测试文件演练通过（3 个文件，SHA-256 与 mtime 一致，隔离区残留 0）；**未对用户真实数据执行 execute/purge/restore，正式验收 0 台**。
 - 真实 HarmonyOS NEXT：**0 台完成验收**。

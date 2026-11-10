@@ -301,23 +301,26 @@ def test_cleanup_html_zero_checks_is_not_reported_as_passed():
 def test_cleanup_html_has_mobile_layout_rules():
     analysis, selection, execution, verification = _cleanup_bundle()
     html = render_cleanup_html(analysis, selection, execution, verification)
-    assert 'name="viewport" content="width=device-width, initial-scale=1"' in html
-    assert "@media (max-width:640px)" in html
-    assert "@media (max-width:340px)" in html
+    assert 'name="viewport"' in html and "width=device-width" in html
+    # Two mobile breakpoints: tablet-ish reflow, then the phone layout where
+    # wide tables become labelled cards instead of sideways scrolling.
+    assert "@media (max-width:760px)" in html
+    assert "@media (max-width:560px)" in html
     assert "overflow-x:auto" in html
-    assert "width:max-content" in html
+    assert 'data-label' in html
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in html
     assert "overflow-wrap:anywhere" in html
-    assert "flex-wrap:nowrap" in html
+    # Dark mode must ship with the report, not rely on the browser default.
+    assert "@media (prefers-color-scheme: dark)" in html
 
 
 def test_analysis_and_cleanup_share_the_same_responsive_css():
     analysis, selection, execution, verification = _cleanup_bundle()
     analysis_html = render_analysis_html(analysis, {})
     cleanup_html = render_cleanup_html(analysis, selection, execution, verification)
-    assert "@media (max-width:640px)" in analysis_html
+    assert "@media (max-width:760px)" in analysis_html
     assert "overflow-x:auto" in analysis_html
-    assert "width:max-content" in analysis_html
+    assert 'data-label' in analysis_html
     analysis_css = analysis_html.split("<style>", 1)[1].split("</style>", 1)[0]
     cleanup_css = cleanup_html.split("<style>", 1)[1].split("</style>", 1)[0]
     assert analysis_css == cleanup_css
@@ -381,3 +384,51 @@ def test_cleanup_html_reports_restore(env):
     assert "已恢复" in html
     assert "2 个" in html
     assert env.phone.exists(CACHE + "/a.bin")
+
+
+def test_bullet_lists_keep_their_gutter():
+    """The global reset zeroes padding, which pushed list markers outside the
+    card.  Every bare list needs an explicit left gutter."""
+    analysis, selection, execution, verification = _cleanup_bundle()
+    execution["status"] = "partial"
+    execution["summary"]["failed_files"] = 1
+    execution["quarantine_state"] = {"remaining_files": 2, "remaining_bytes": 800}
+    html = render_cleanup_html(analysis, selection, execution, verification)
+
+    # the "remaining problems" list and any limitation list must carry the class
+    assert 'class="bullet-list"' in html
+    css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert ".bullet-list{margin:6px 0 0;padding-left:20px" in css
+    # a bare <ul> with no class would render its markers outside the card
+    assert "<ul>" not in html.split('id="next"', 1)[1].split("</section>", 1)[0]
+
+
+def test_analysis_limitations_list_has_a_gutter():
+    html = render_analysis_html(_analysis())
+    section = html.split('id="limits"', 1)[1].split("</section>", 1)[0]
+    assert 'class="bullet-list"' in section
+    assert "无法读取 /data/data" in section
+
+
+def test_bullet_lists_keep_their_gutter():
+    """The global reset zeroes padding, which pushed list markers outside the
+    card.  Every bare list needs an explicit left gutter."""
+    analysis, selection, execution, verification = _cleanup_bundle()
+    execution["status"] = "partial"
+    execution["summary"]["failed_files"] = 1
+    execution["quarantine_state"] = {"remaining_files": 2, "remaining_bytes": 800}
+    html = render_cleanup_html(analysis, selection, execution, verification)
+
+    # the "remaining problems" list and any limitation list must carry the class
+    assert 'class="bullet-list"' in html
+    css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert ".bullet-list{margin:6px 0 0;padding-left:20px" in css
+    # a bare <ul> with no class would render its markers outside the card
+    assert "<ul>" not in html.split('id="next"', 1)[1].split("</section>", 1)[0]
+
+
+def test_analysis_limitations_list_has_a_gutter():
+    html = render_analysis_html(_analysis())
+    section = html.split('id="limits"', 1)[1].split("</section>", 1)[0]
+    assert 'class="bullet-list"' in section
+    assert "无法读取 /data/data" in section
